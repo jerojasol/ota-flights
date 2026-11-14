@@ -144,6 +144,19 @@ describe('App', () => {
     expect(await screen.findByText('Showing 2 itineraries')).toBeInTheDocument()
   })
 
+  it('searches again when the same search is submitted twice', async () => {
+    window.history.replaceState(null, '', '/?origin=MAD&destination=JFK&date=2026-11-20')
+    const fetchMock = stubFetch(() => json(page([itinerary('a')])))
+    renderApp()
+    expect(await screen.findByText('Showing 1 itineraries')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Search' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(window.location.search).toBe('?origin=MAD&destination=JFK&date=2026-11-20')
+  })
+
   it('rejects origin equal to destination without calling the API', async () => {
     const fetchMock = stubFetch(() => json(page([])))
     renderApp()

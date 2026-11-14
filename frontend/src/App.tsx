@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { SearchForm, type FieldErrors, type FieldName } from './components/SearchForm'
 import { SearchResults } from './components/SearchResults'
 import { parseSearch, serializeSearch, type SearchState } from './searchState'
@@ -9,6 +10,7 @@ const FIELDS: readonly string[] = ['origin', 'destination', 'date', 'maxPrice', 
 export default function App() {
   const [search, setSearch] = useState<SearchState | null>(() => parseSearch(window.location.search))
   const [formKey, setFormKey] = useState(0)
+  const queryClient = useQueryClient()
   const result = useItinerarySearch(search)
 
   useEffect(() => {
@@ -22,7 +24,11 @@ export default function App() {
 
   function handleSubmit(next: SearchState) {
     const url = serializeSearch(next)
-    if (url !== window.location.search) window.history.pushState(null, '', url)
+    if (url === window.location.search) {
+      void queryClient.invalidateQueries({ queryKey: ['itineraries', next] })
+      return
+    }
+    window.history.pushState(null, '', url)
     setSearch(next)
   }
 

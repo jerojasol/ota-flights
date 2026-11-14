@@ -710,3 +710,26 @@ Other notes: `@testing-library/dom` (a peer of `@testing-library/react`) and `@t
 
 Verified: lint clean, 22 tests passed, build OK. Not committed.
 **Artifacts:** `frontend/src/App.tsx`, `frontend/src/App.test.tsx`, `frontend/src/searchState.ts`, `frontend/src/useItinerarySearch.ts`, `frontend/src/components/`, `frontend/src/styles.css`, `frontend/src/test/setup.ts`, `docs/ai-log.md`.
+
+## 2026-11-14 — G3: freshness badge, provider panel and live refresh
+
+**Intent:** Make the dashboard show how fresh the data is, report each provider's outcome, and follow background refreshes live with capped polling and a manual refresh.
+**Prompt (summary):** `frontend/prompts/03-freshness-and-providers.md`: `FreshnessBadge` (text per state, relative age every 30 s, UTC `title`); `ProviderPanel` (always ALPHA/BETA/GAMMA, fixed wording for statuses and for the partial and none-answered sentences); `useFreshnessPolling` (every 2 s, `limit: 1`, key `["freshness", params]`, stops on FRESH, on a search change, while the tab is hidden, or after 15 attempts); on FRESH, refetch silently with one page loaded or show a "Reload" bar with more; "Refresh now" with 409 treated as busy plus polling; two-column layout that stacks on narrow screens; 8 required tests with fake timers.
+**Generated:**
+- `src/useFreshnessPolling.ts`: polling driven by `setTimeout` and `queryClient.fetchQuery` on `["freshness", params]`, not React Query's `refetchInterval`, so the first poll happens 2 s after the first page and not immediately. A failed poll still counts toward the cap. Tab visibility comes from `useSyncExternalStore` on `visibilitychange`. The fresh callback uses `useEffectEvent`, so loading more pages does not restart the 2 s timer.
+- `src/components/SearchResults.tsx` is mounted with `key` = the serialised search. A new search therefore drops all polling and refresh state, and the cleanup clears the timer and cancels the in-flight poll. "Refresh now" uses `useMutation`. "Reload" trims the infinite query to page 1 with `setQueryData` and refetches, so there is no loading flash. Results now stay rendered whenever data exists (`pageCount > 0`). This matters because in TanStack v5 a failed load-more sets `status: 'error'`.
+- `src/components/{FreshnessBadge,ProviderPanel}.tsx`, the badge slot in `ResultsList`, and the layout and status styles. Every status has a text label plus a marker character, so colour is never the only signal.
+- `src/freshness.test.tsx` has 11 tests: the 8 required ones, plus "none answered", a 409 → busy message → polling, and another failure shown inline with the list kept.
+**Human review / corrections:** Accepted. Notes:
+1. ESLint's react-refresh rule rejected an exported helper from a component file. The helper was made private.
+2. Mutation checks: with `MAX_POLLS` at 16, the 15-poll test failed; with the "only one page loaded" rule removed, the Reload test failed. Both were restored.
+3. Live acceptance used `curl` through the Vite proxy with the UI's own requests, because there was no browser in the session. Observations:
+   - **Step 1:** LIS→BOS arrived `FRESH` with all three providers OK, but the timing line was lost to `jq`. A repeat on OPO→YUL took **4.2 s** cold and arrived `FRESH`.
+   - **Step 2:** with errorRate 0.7, four "Refresh now" calls returned all OK; TIMEOUT/ERROR/TIMEOUT (none answered); OK/ERROR/TIMEOUT (partial, 1 of 3); TIMEOUT/CIRCUIT_OPEN/CIRCUIT_OPEN. The search still returned 20 stored items each time. Which provider failed was random, because chaos is global in the mock.
+   - **Step 3:** with Redis stopped, every first page was `STALE` with `providers: {}` (HTTP 200, 20 items), and `POST` returned **409**. The UI shows this as three "no data" rows, no summary sentence, and "May be out of date" after 15 polls (30 s).
+   - **Step 4:** Redis restarted and chaos reset to 0.1.
+   - The circuit breakers opened during step 2 were still open on the next new route (OPO→YUL: BETA and GAMMA `CIRCUIT_OPEN`).
+   - "No console errors" was **not** checked, because there was no browser.
+
+Verified: lint clean, 33 tests passed, build OK. Not committed.
+**Artifacts:** `frontend/src/useFreshnessPolling.ts`, `frontend/src/components/{FreshnessBadge,ProviderPanel,SearchResults,ResultsList}.tsx`, `frontend/src/App.tsx`, `frontend/src/useItinerarySearch.ts`, `frontend/src/styles.css`, `frontend/src/freshness.test.tsx`, `docs/ai-log.md`.

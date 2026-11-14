@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import static io.github.jerojasol.flights.domain.Fixtures.EUR;
 import static io.github.jerojasol.flights.domain.Fixtures.IB4120;
 import static io.github.jerojasol.flights.domain.Fixtures.IB6251;
 import static io.github.jerojasol.flights.domain.Fixtures.LHR;
@@ -12,6 +13,7 @@ import static io.github.jerojasol.flights.domain.Fixtures.offer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Currency;
 import java.util.List;
 import java.util.Map;
 
@@ -20,7 +22,7 @@ import org.junit.jupiter.api.Test;
 class OfferValidatorTest {
 
     private static final String START = "2026-11-20T07:35:00Z";
-    private final OfferValidator validator = new OfferValidator();
+    private final OfferValidator validator = new OfferValidator(EUR);
 
     private OfferValidation validate(List<Segment> segments) {
         return validator.validate(offer(Provider.ALPHA, "100.00", segments));
@@ -46,6 +48,31 @@ class OfferValidatorTest {
         Offer offer = offer(Provider.BETA, "10.00", chain(START, 480));
 
         assertThat(validator.validate(offer).offer()).isSameAs(offer);
+    }
+
+    @Test
+    void should_reject_and_count_currency_mismatch_when_offer_is_not_in_reference_currency() { // O1
+        Offer usd = new Offer(Provider.BETA, chain(START, 480), Price.of("100.00", "USD"));
+
+        assertThat(validator.validate(usd)).isInstanceOfSatisfying(OfferValidation.Rejected.class,
+                rejected -> assertThat(rejected.reason()).isEqualTo(RejectionReason.CURRENCY_MISMATCH));
+
+        ValidationSummary summary = validator.validateAll(List.of(usd, offer(Provider.ALPHA, "100.00", chain(START, 480))));
+        assertThat(summary.valid()).hasSize(1);
+        assertThat(summary.rejectedByReason()).isEqualTo(Map.of(RejectionReason.CURRENCY_MISMATCH, 1));
+    }
+
+    @Test
+    void should_report_currency_mismatch_when_it_and_structural_rules_both_fail() { // O1 before I1–I9
+        Offer usd = new Offer(Provider.BETA, chain(START, 120, 44, 120), Price.of("100.00", "USD"));
+
+        assertThat(validator.validate(usd)).isInstanceOfSatisfying(OfferValidation.Rejected.class,
+                rejected -> assertThat(rejected.reason()).isEqualTo(RejectionReason.CURRENCY_MISMATCH));
+    }
+
+    @Test
+    void should_reject_construction_when_reference_currency_is_missing() {
+        assertThatThrownBy(() -> new OfferValidator((Currency) null)).isInstanceOf(InvalidOfferException.class);
     }
 
     @Test

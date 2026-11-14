@@ -70,6 +70,7 @@ _Per layer: pure unit tests in `domain`; fixture-driven mapper tests; WireMock f
 - _Exact-key deduplication only; no fuzzy matching._
   - Beta sends local time plus an IANA zone, without an offset. During the autumn daylight-saving overlap a local time happens twice, and the adapter uses the earlier offset. A departure in the repeated hour may therefore be mapped one hour early, get a different Itinerary Key from the same flight sent by Alpha or Gamma (both UTC), and not deduplicate against them. Local times inside a spring-forward gap do not exist and are dropped as unmappable. Fixing it would need Beta to send an offset.
 - _On-demand synchronous aggregation on cold miss (bounded); no event pipeline._
+- _Redis outage: fail closed, serve from Postgres, no refresh._ While Redis is unreachable, searches serve whatever Postgres holds with freshness STALE, nothing is aggregated and nothing is refreshed, so provider traffic and latency stay where they were. A route that was never aggregated before returns an empty page until Redis is back. Stale data is served for as long as the outage lasts, which is the cost of protecting the providers. Lock release is compare-and-delete, so an expired holder cannot release another holder's lock.
 - _No authentication._
 - _Frontend scope._
 - _Others as discovered._

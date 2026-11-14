@@ -260,6 +260,8 @@ State of the data for one `SearchCriteria`, as seen by `SearchItinerariesUseCase
 | `REFRESHING` | A refresh is already running (lock held) | Serve existing data, do not start another |
 | `MISSING` | Never aggregated for this criteria | Aggregate synchronously, then query |
 
+If the freshness store is unavailable, `status` reports `STALE` and `tryLock` is empty (fail closed): searches serve the repository, nothing is aggregated or refreshed, and a never-aggregated route returns an empty page. This is a deliberate exception to the table above; see `docs/SOLUTION.md` §6.
+
 A request that carries a `PageCursor` never triggers aggregation (pages must stay consistent with page 1).
 
 ### Aggregation lock ownership

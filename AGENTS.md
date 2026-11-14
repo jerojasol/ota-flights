@@ -44,6 +44,10 @@ Work from inside a project directory to get its tools. Tools that span both proj
 docker compose up --build              # full stack
 docker compose down -v                 # reset including volumes
 docker compose logs -f flight-aggregator
+./scripts/smoke.sh [base-url] [date]   # end-to-end smoke test (curl + jq), stack must be up
+MOCK_CHAOS_ENABLED=false docker compose up --build   # quiet run: no artificial latency or errors
 ```
+
+Every variable has a default in `docker-compose.yml`; `.env.example` lists them all.
 
 For project-specific build and test commands, see each project's `AGENTS.md`.

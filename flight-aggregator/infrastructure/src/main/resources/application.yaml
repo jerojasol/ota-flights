@@ -58,14 +58,14 @@ providers:
     base-url: ${PROVIDER_BETA_URL:http://localhost:8081/beta}
   gamma:
     base-url: ${PROVIDER_GAMMA_URL:http://localhost:8081/gamma}
-  timeout: ${PROVIDER_TIMEOUT:3s}
+  timeout: ${PROVIDER_TIMEOUT:5500ms}
 
 aggregation:
   markup-percentage: ${MARKUP_PERCENTAGE:5}
   reference-currency: ${REFERENCE_CURRENCY:EUR}
   freshness-ttl: ${FRESHNESS_TTL:10m}
   lock-ttl: ${LOCK_TTL:30s}
-  provider-budget: ${PROVIDER_BUDGET:3500ms}
+  provider-budget: ${PROVIDER_BUDGET:6s}
   warm-routes: ${WARM_ROUTES:MAD-JFK,MAD-LHR,BCN-JFK}
   warm-interval: ${WARM_INTERVAL:PT10M}
 

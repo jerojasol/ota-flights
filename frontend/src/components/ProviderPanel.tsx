@@ -41,7 +41,7 @@ export function ProviderPanel({ providers, refreshing, message, messageIsError, 
 
   return (
     <section className="panel" aria-label="Providers">
-      <h2>Providers</h2>
+      <h2>Last successful aggregation</h2>
       {summary && <p className="panel-summary">{summary}</p>}
       <ul className="providers">
         {PROVIDERS.map((name) => {

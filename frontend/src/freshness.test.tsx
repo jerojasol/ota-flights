@@ -275,6 +275,36 @@ describe('Refresh now', () => {
     expect(screen.getByText('Showing 1 itineraries')).toBeInTheDocument()
   })
 
+  it('keeps the panel and says so when no provider answered the refresh', async () => {
+    const api = stubFetch(({ method }) =>
+      method === 'POST'
+        ? json({
+            persisted: 0,
+            aggregatedAt: new Date().toISOString(),
+            providers: {
+              ALPHA: { status: 'TIMEOUT', received: 0, rejected: 0, elapsedMs: 6000 },
+              BETA: { status: 'ERROR', received: 0, rejected: 0, elapsedMs: 50 },
+              GAMMA: { status: 'CIRCUIT_OPEN', received: 0, rejected: 0, elapsedMs: 0 },
+            },
+          })
+        : json(page('FRESH', undefined, null, { ALPHA: { status: 'OK', received: 5, rejected: 1, elapsedMs: 900 } })),
+    )
+    renderApp()
+    await screen.findByText('Up to date')
+    const searchesBefore = api.searches()
+
+    await user().click(screen.getByRole('button', { name: 'Refresh now' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('No provider answered; showing stored results.')
+    expect(within(screen.getByTestId('provider-ALPHA')).getByText('OK')).toBeInTheDocument()
+    expect(within(screen.getByTestId('provider-BETA')).getByText('no data')).toBeInTheDocument()
+    expect(screen.getByText('Up to date')).toBeInTheDocument()
+    expect(screen.getByText('Showing 1 itineraries')).toBeInTheDocument()
+    await advance(5000)
+    expect(api.searches()).toBe(searchesBefore)
+    expect(api.polls()).toBe(0)
+  })
+
   it('shows other failures inline and keeps the list', async () => {
     stubFetch(({ method }) =>
       method === 'POST' ? json({ status: 500, detail: 'Boom' }, 500, 'application/problem+json') : json(page('FRESH')),

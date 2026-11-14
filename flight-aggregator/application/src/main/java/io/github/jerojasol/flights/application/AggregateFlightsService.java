@@ -8,6 +8,7 @@ import io.github.jerojasol.flights.domain.model.Offer;
 import io.github.jerojasol.flights.domain.model.OfferValidator;
 import io.github.jerojasol.flights.domain.model.Provider;
 import io.github.jerojasol.flights.domain.model.ProviderOutcome;
+import io.github.jerojasol.flights.domain.model.ProviderResponse;
 import io.github.jerojasol.flights.domain.model.ProviderStatus;
 import io.github.jerojasol.flights.domain.model.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.model.SearchCriteria;
@@ -82,8 +83,9 @@ public final class AggregateFlightsService implements AggregateFlightsUseCase {
         fetches.forEach((provider, fetch) -> {
             ValidationSummary summary = validator.validateAll(fetch.offers());
             valid.addAll(summary.valid());
-            outcomes.put(provider, new ProviderOutcome(
-                    fetch.status(), fetch.offers().size(), summary.rejected(), fetch.elapsed()));
+            // Unmappable itineraries (dead legs the adapter could not build) were received and rejected.
+            outcomes.put(provider, new ProviderOutcome(fetch.status(), fetch.offers().size() + fetch.unmappable(),
+                    summary.rejected() + fetch.unmappable(), fetch.elapsed()));
         });
 
         List<Itinerary> itineraries = deduplicator.deduplicate(valid).stream().map(factory::create).toList();
@@ -133,8 +135,9 @@ public final class AggregateFlightsService implements AggregateFlightsUseCase {
     private static ProviderFetch fetch(FlightProviderPort provider, SearchCriteria criteria) {
         long startedAt = System.nanoTime();
         try {
-            List<Offer> offers = List.copyOf(provider.fetch(criteria));
-            return new ProviderFetch(ProviderStatus.OK, offers, elapsedSince(startedAt));
+            ProviderResponse response = provider.fetch(criteria);
+            return new ProviderFetch(ProviderStatus.OK, response.offers(), response.unmappable(),
+                    elapsedSince(startedAt));
         } catch (ProviderUnavailableException unavailable) {
             return ProviderFetch.failed(unavailable.status(), elapsedSince(startedAt));
         } catch (RuntimeException unexpected) {
@@ -146,10 +149,10 @@ public final class AggregateFlightsService implements AggregateFlightsUseCase {
         return Duration.ofNanos(Math.max(0, System.nanoTime() - startedAtNanos));
     }
 
-    private record ProviderFetch(ProviderStatus status, List<Offer> offers, Duration elapsed) {
+    private record ProviderFetch(ProviderStatus status, List<Offer> offers, int unmappable, Duration elapsed) {
 
         static ProviderFetch failed(ProviderStatus status, Duration elapsed) {
-            return new ProviderFetch(status, List.of(), elapsed);
+            return new ProviderFetch(status, List.of(), 0, elapsed);
         }
     }
 }

@@ -53,7 +53,7 @@ class AggregationResultTest {
     }
 
     @Test
-    void should_reject_outcome_when_counts_or_elapsed_are_negative() {
+    void should_reject_outcome_when_counts_or_elapsed_are_negative() { // PO1
         assertThatThrownBy(() -> new ProviderOutcome(ProviderStatus.OK, -1, 0, Duration.ZERO))
                 .isInstanceOf(InvalidAggregationException.class);
         assertThatThrownBy(() -> new ProviderOutcome(ProviderStatus.OK, 0, 0, Duration.ofMillis(-1)))

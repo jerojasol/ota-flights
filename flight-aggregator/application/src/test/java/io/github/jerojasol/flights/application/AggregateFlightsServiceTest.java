@@ -175,6 +175,25 @@ class AggregateFlightsServiceTest {
     }
 
     @Test
+    void should_count_unmappable_itineraries_as_received_and_rejected_when_adapter_reports_them() {
+        AggregateFlightsService service = service(DIRECT, BUDGET,
+                StubProvider.returning(ALPHA, direct(ALPHA, "IB6251", "500.00"), shortConnection(ALPHA, "300.00"))
+                        .withUnmappable(3),
+                StubProvider.returning(BETA, direct(BETA, "IB6253", "600.00")));
+
+        AggregationResult result = service.aggregate(MAD_JFK);
+
+        assertThat(result.outcomes().get(ALPHA)).satisfies(alpha -> {
+            assertThat(alpha.status()).isEqualTo(ProviderStatus.OK);
+            assertThat(alpha.offersReceived()).isEqualTo(5);
+            assertThat(alpha.offersRejected()).isEqualTo(4);
+        });
+        assertThat(result.outcomes().get(BETA).offersReceived()).isEqualTo(1);
+        assertThat(result.outcomes().get(BETA).offersRejected()).isZero();
+        assertThat(result.persisted()).isEqualTo(2);
+    }
+
+    @Test
     void should_report_error_and_continue_when_provider_throws_unexpected_exception() {
         AggregateFlightsService service = service(DIRECT, BUDGET,
                 StubProvider.failing(ALPHA, new IllegalStateException("boom")),

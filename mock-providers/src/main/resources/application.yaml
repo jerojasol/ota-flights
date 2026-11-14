@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: mock-providers
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: ${SERVER_PORT:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+mock:
+  # Deterministic data generation: same seed -> same inventory
+  seed: ${MOCK_SEED:42}
+  # Number of itineraries each provider generates per (origin, destination, date) query
+  inventory-size: ${MOCK_INVENTORY_SIZE:500}
+  # Fraction of itineraries intentionally shared across providers (exercises deduplication)
+  overlap-ratio: ${MOCK_OVERLAP_RATIO:0.30}
+  # Fraction of itineraries intentionally invalid (dead legs, impossible connections)
+  invalid-ratio: ${MOCK_INVALID_RATIO:0.05}
+  chaos:
+    enabled: ${MOCK_CHAOS_ENABLED:true}
+    latency-min: ${MOCK_LATENCY_MIN:100ms}
+    latency-max: ${MOCK_LATENCY_MAX:5000ms}
+    # Probability [0..1] that a request fails with HTTP 500
+    error-rate: ${MOCK_ERROR_RATE:0.10}

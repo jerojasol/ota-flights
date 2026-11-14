@@ -4,6 +4,7 @@ import io.github.jerojasol.flights.domain.port.out.FlightProviderPort;
 import io.github.jerojasol.flights.infrastructure.provider.ResilienceSettings;
 import io.github.jerojasol.flights.infrastructure.provider.alpha.AlphaProviderAdapter;
 import io.github.jerojasol.flights.infrastructure.provider.beta.BetaProviderAdapter;
+import io.github.jerojasol.flights.infrastructure.provider.gamma.GammaProviderAdapter;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -33,6 +34,13 @@ class ProviderConfiguration {
     FlightProviderPort betaProvider(ProviderProperties properties,
                                     @Qualifier("providerCallExecutor") ExecutorService providerCallExecutor) {
         return new BetaProviderAdapter(properties.beta().baseUrl(),
+                ResilienceSettings.defaults(properties.timeout()), providerCallExecutor);
+    }
+
+    @Bean
+    FlightProviderPort gammaProvider(ProviderProperties properties,
+                                     @Qualifier("providerCallExecutor") ExecutorService providerCallExecutor) {
+        return new GammaProviderAdapter(properties.gamma().baseUrl(),
                 ResilienceSettings.defaults(properties.timeout()), providerCallExecutor);
     }
 }

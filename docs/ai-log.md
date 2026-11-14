@@ -483,3 +483,62 @@ Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 applicat
 **Generated:** `GammaOfferMapper.toOffer` strips and uppercases (`Locale.ROOT`) the currency once, and uses that value both for `minorUnitDigits` and for `Price.of`. New test `should_accept_lowercase_currency_code_like_alpha_and_beta_do`.
 **Human review / corrections:** The defect came from the previous follow-up: `minorUnitDigits` looked up the raw field before `Price.of` had normalised it, so `eur` was unmappable for Gamma but a valid EUR Offer for Alpha and Beta. With the normalisation removed temporarily, the new test failed; it was then restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 52 infrastructure unit tests, 35 ITs); `/check-arch` commands pass (ArchUnit 10/10). This closes D3 for all three providers. Not committed.
 **Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/gamma/GammaOfferMapper.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/gamma/GammaOfferMapperTest.java`.
+
+## 2026-11-14 — D4: Redis freshness adapter
+
+**Intent:** Implement `FreshnessPort` on Redis: freshness marker, aggregation lock with owner-checked release, and STALE detection, with degraded behaviour when Redis is down.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/04-cache-freshness.md`: `RedisFreshnessAdapter` on `StringRedisTemplate` with `fresh`, `lock` and `seen` keys; `SET NX` locks; compare-and-delete release through a Lua script; `markFresh` writes both keys; `lastResult` reads back the stored result; degraded fallback when Redis is unreachable; `CacheConfiguration` with `aggregation.*` TTLs; an IT with an owner check after expiry; a key-builder unit test.
+**Generated:**
+- `cache/RedisFreshnessAdapter`, `cache/FreshnessKeys` (package-private key builder), `config/CacheConfiguration`, `config/AggregationProperties` (record bound to `aggregation.*`, validates both TTLs positive), and `lock-ttl: ${LOCK_TTL:30s}` in `application.yaml`.
+- Awaitility as a test dependency (version managed by Spring Boot 4.1.2, 4.3.0).
+- Tests: `FreshnessKeysTest` (2) and `RedisFreshnessAdapterIT` (6): MISSING→FRESH→STALE after the freshness TTL; a lock granted once and again after release; a lock freed when its TTL expires; the owner check; `lastResult` still returning the outcomes after the freshness TTL has expired; degraded behaviour against a closed port.
+**Decisions:**
+- **`seen` holds the result JSON; `fresh` holds the marker `1`.** The prompt had the reverse. The phase-B prompt says a STALE response takes its `lastOutcomes` from `freshness.lastResult`, and by then `fresh` has expired. Holding the JSON in `fresh` would lose the outcomes exactly when they are needed. So `seen` (7 days) holds the JSON, and `fresh` only says "recently aggregated".
+- **STALE via `seen`**, as the prompt chose: the application did not change. `status`: `fresh` → FRESH; `lock` → REFRESHING; `seen` → STALE; otherwise MISSING. A lock is checked before `seen`, so a refresh already running on stale data reports REFRESHING.
+- **`markFresh` writes `seen` before `fresh`.** If the second write fails, the route stays STALE and the next search refreshes it. The other order would report FRESH with no stored outcomes.
+- **`LockToken` is the UUID alone.** The prompt wrote `new LockToken(criteria, uuid)`, but the domain record is `LockToken(String value)` (domain-model.md §8). `release` takes the criteria from its own signature, so the key is still derived correctly.
+- **The IT builds the connection by hand** (`LettuceConnectionFactory` on the container's mapped port), not via `@ServiceConnection`: nothing needs a Spring context for this adapter.
+**Human review / corrections:** The `DEL` mutation check was run because the compare-and-delete was the requirement that mattered most. With the Lua script replaced by a plain `DEL`, the owner test failed (`expected REFRESHING but was MISSING`): the expired owner removed the lock of the caller who had re-acquired it. The script was restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 54 infrastructure unit tests, 41 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Known limitations:** Redis outage is degraded, not failed: every search re-aggregates and nothing is shared between instances. This is written in the adapter's class comment; it goes into `SOLUTION.md` §6 with the next documentation pass. The `seen` key keeps a route's last result for 7 days, so a result can be served as STALE long after its TTL, which is what the phase-B STALE rule intends.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/cache/{RedisFreshnessAdapter,FreshnessKeys}.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/{CacheConfiguration,AggregationProperties}.java`, `flight-aggregator/infrastructure/src/main/resources/application.yaml`, `flight-aggregator/infrastructure/pom.xml`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/cache/{FreshnessKeysTest,RedisFreshnessAdapterIT}.java`, `flight-aggregator/prompts/infrastructure/04-cache-freshness.md`.
+
+## 2026-11-14 — D4 follow-up: fail closed on a Redis outage, corrupt seen values, seen TTL
+
+**Intent:** Fix the two MAJOR and one MINOR `domain-guardian` findings on D4. The MAJOR one was a real defect in the AI's design: during a Redis outage every concurrent search became the lock holder and aggregated synchronously, multiplying provider traffic by the request rate.
+**Prompt (summary):** Human approved the three recommendations:
+1. Fail closed: with Redis unreachable, `status` returns STALE, `tryLock` returns empty, `lastResult` is empty. An IT with 64 concurrent searches through the real `SearchItinerariesService` asserts zero aggregator calls. Document the outage in `SOLUTION.md` §6 and the adapter Javadoc.
+2. A corrupt `seen` value is discarded and the route reads MISSING, with no version field.
+3. The `seen` TTL is `max(7 days, 2 × freshness TTL)`, computed in `markFresh`.
+4. A note for D6: the healthcheck uses liveness, and the admin endpoint's lock behaviour is stated.
+**Generated:**
+- `RedisFreshnessAdapter`: fail-closed branches; `lastResult` captures `JacksonException | IllegalArgumentException | DomainException`, logs `outcome=CORRUPT`, deletes the key; `seenTtl(freshnessTtl)`; the class Javadoc rewritten.
+- Tests (`RedisFreshnessAdapterIT`, now 11): the outage contract; the concurrent-search IT; two corrupt-value ITs (garbage JSON, a removed provider name); two `seen` TTL ITs (4-day and 10-minute freshness TTLs).
+- `docs/SOLUTION.md` §6: the outage bullet rewritten.
+- `prompts/infrastructure/06-web-and-operations.md`: **created**, because the D6 prompt did not exist yet. It holds the two notes for D6 (liveness healthcheck; admin lock behaviour).
+**Decisions:**
+- **STALE when Redis is down, not MISSING.** MISSING would make the application aggregate synchronously, which is the herd we are removing. STALE with no lock serves the repository and schedules nothing, so the application needed no change. The cost: a route never aggregated before reads as STALE with an empty page, which is a claim of data that does not exist. This was accepted explicitly, and the SOLUTION bullet says it.
+- **Admin endpoint does not bypass the lock** (D6 note). Its consequence is that it cannot refresh during an outage. The conflict with the premise "the only way to refresh while Redis is down" is recorded as an open question for D6; a bypass would need its own deliberate decision.
+- **Corrupt values are deleted, not kept.** A value that cannot be decoded is worse than none, because it makes every search for that route fail until the seen TTL. Deletion is not atomic with a concurrent `markFresh`; see the review question below.
+- **No version field** in the stored shape, as the human chose. A future incompatible change would be handled the same way as corruption: discard and re-aggregate.
+**Human review / corrections:** The MAJOR herd finding was correct, and it was the AI's own design. The degraded-mode prompt asked for "tryLock returns a token", and the AI followed it without checking the load it creates. Mutation checks: restoring the fail-open `tryLock` made the outage IT and the concurrent IT fail (the aggregator was called); removing the corrupt handling made both corrupt-value ITs fail. Both restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 54 infrastructure unit tests, 46 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Known limitations:** During an outage the service serves stale data indefinitely and cannot refresh until Redis is back. An operator who needs a refresh during an outage has no path yet (open question in the D6 note).
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapterIT.java`, `docs/SOLUTION.md`, `flight-aggregator/prompts/infrastructure/06-web-and-operations.md`.
+
+## 2026-11-14 — D4 follow-up: STALE contract in §8, compare-and-delete on discard
+
+**Intent:** Fix the two MINOR `domain-guardian` findings on D4 after the outage change.
+**Prompt (summary):** Human approved both: (1) document the fail-closed STALE in `domain-model.md` §8 and link it to `SOLUTION.md` §6; (2) discard a corrupt `seen` value only if it is still the corrupt one.
+**Generated:**
+- `domain-model.md` §8: one paragraph after the Freshness table stating that an unavailable store reports STALE, tryLock is empty, nothing is aggregated, and a never-aggregated route returns an empty page. It is marked as a deliberate exception and linked to `SOLUTION.md` §6.
+- `RedisFreshnessAdapter.discard(key, corruptJson)` runs a compare-and-delete Lua script (`DISCARD_IF_UNCHANGED`) instead of an unconditional `DEL`.
+- IT `should_keep_valid_result_written_after_corrupt_value_was_read`: a template hook writes a valid result between the read of the corrupt value and the discard; the valid result must survive.
+**Decisions:** the compare-and-delete reuses the pattern already used for releasing the lock, so there is one idiom for "change only what I still own" in the adapter.
+**Human review / corrections:** Both findings were correct. The discard race was a window of milliseconds, but the loss was silent, and it caused an unnecessary synchronous re-aggregation. Mutation check: with the unconditional `DEL` restored, the new IT failed; the Lua version was then restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 54 infrastructure unit tests, 47 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Artifacts:** `flight-aggregator/docs/domain-model.md`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapterIT.java`.
+
+## 2026-11-14 — Correction: the D6 notes file was removed
+
+**Intent:** Correct the D4 follow-up entry above, which says `prompts/infrastructure/06-web-and-operations.md` was created.
+**Prompt (summary):** Human removed that file and asked to drop the commit that added it. The D6 prompt does not exist yet, so the notes it held were not kept.
+**Human review / corrections:** The file and its commit are removed from the branch. The two D6 notes (liveness healthcheck; the admin endpoint does not bypass the lock, with the open question about refreshing during an outage) are not in the repository; they must be written again in the D6 prompt when it is created. The `prompts/infrastructure/04-cache-freshness.md` commit is kept.
+**Artifacts:** none in the repository; `flight-aggregator/prompts/infrastructure/06-web-and-operations.md` no longer exists.

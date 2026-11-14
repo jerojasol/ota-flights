@@ -17,6 +17,7 @@ import io.github.jerojasol.flights.domain.model.ProviderResponse;
 import io.github.jerojasol.flights.domain.model.ProviderStatus;
 import io.github.jerojasol.flights.domain.model.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.infrastructure.provider.ProviderContractViolation;
 import io.github.jerojasol.flights.infrastructure.provider.ResilienceSettings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -94,10 +95,14 @@ class AlphaProviderAdapterIT {
     }
 
     @Test
-    void should_report_error_when_body_is_not_alpha_json() {
+    void should_report_error_after_exactly_one_request_when_body_is_not_alpha_json() {
         alpha.stubFor(get(urlPathEqualTo("/alpha/flights")).willReturn(okJson("<html>gateway</html>")));
 
-        assertThat(fetchFailure().status()).isEqualTo(ProviderStatus.ERROR);
+        ProviderUnavailableException failure = fetchFailure();
+
+        assertThat(failure.status()).isEqualTo(ProviderStatus.ERROR);
+        assertThat(failure.getCause()).isInstanceOf(ProviderContractViolation.class);
+        alpha.verify(1, getRequestedFor(urlPathEqualTo("/alpha/flights")));
     }
 
     @Test

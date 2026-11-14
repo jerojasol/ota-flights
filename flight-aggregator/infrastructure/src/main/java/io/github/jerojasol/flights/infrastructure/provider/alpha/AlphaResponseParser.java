@@ -1,5 +1,7 @@
 package io.github.jerojasol.flights.infrastructure.provider.alpha;
 
+import io.github.jerojasol.flights.infrastructure.provider.ProviderContractViolation;
+import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
@@ -19,8 +21,13 @@ final class AlphaResponseParser {
     private AlphaResponseParser() {
     }
 
+    /** @throws ProviderContractViolation when the body is not an Alpha JSON array */
     static List<AlphaItinerary> parse(byte[] body) {
-        List<AlphaItinerary> itineraries = JSON.readValue(body, ITINERARIES);
-        return itineraries == null ? List.of() : itineraries;
+        try {
+            List<AlphaItinerary> itineraries = JSON.readValue(body, ITINERARIES);
+            return itineraries == null ? List.of() : itineraries;
+        } catch (JacksonException unreadable) {
+            throw new ProviderContractViolation("Alpha body is not a JSON array of itineraries", unreadable);
+        }
     }
 }

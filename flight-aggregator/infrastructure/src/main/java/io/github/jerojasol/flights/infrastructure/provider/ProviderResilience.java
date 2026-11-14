@@ -28,7 +28,9 @@ import java.util.function.Supplier;
  *   <li>the attempt exceeds the timeout, or the HTTP client times out → {@code TIMEOUT} (recorded by the breaker,
  *       never retried);</li>
  *   <li>the breaker is open → {@code CIRCUIT_OPEN} (the provider is not called, never retried);</li>
- *   <li>anything else (HTTP error, unreadable body, connection failure) → {@code ERROR}, retried.</li>
+ *   <li>a 2xx body that breaks the contract ({@link ProviderContractViolation}) → {@code ERROR}, not retried, but
+ *       recorded by the breaker;</li>
+ *   <li>anything else (HTTP error status, connection failure, truncated stream) → {@code ERROR}, retried.</li>
  * </ul>
  * Each provider gets its own instance, so one provider's breaker never affects another.
  */
@@ -58,9 +60,15 @@ public final class ProviderResilience {
         this.retry = Retry.of(name, RetryConfig.custom()
                 .maxAttempts(settings.maxAttempts())
                 .waitDuration(settings.retryWait())
-                .retryOnException(failure -> failure instanceof ProviderUnavailableException unavailable
-                        && unavailable.status() == ProviderStatus.ERROR)
+                .retryOnException(ProviderResilience::isRetryable)
                 .build());
+    }
+
+    /** Only transport-level ERRORs are retried; a contract breach would fail the same way again. */
+    private static boolean isRetryable(Throwable failure) {
+        return failure instanceof ProviderUnavailableException unavailable
+                && unavailable.status() == ProviderStatus.ERROR
+                && !(unavailable.getCause() instanceof ProviderContractViolation);
     }
 
     public <T> T call(Supplier<T> attempt) {

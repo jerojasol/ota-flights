@@ -93,6 +93,12 @@ A violation of S1–S3 or I1–I9 does not throw inside the aggregation pipeline
 
 Exceptions: every type throws its own unchecked `DomainException` subtype: `InvalidAirportException` (A1), `InvalidCarrierException` (C1), `InvalidFlightNumberException` (F1), `InvalidPriceException` (P1–P4, including cross-currency arithmetic), `InvalidSegmentException` (S1–S3), `InvalidOfferException` (null provider/price, null or empty segments), `InvalidItineraryKeyException` (empty segments, malformed stored key), `InvalidItineraryException` (I1–I12).
 
+### Rehydration
+
+`Itinerary.rehydrate(key, segments, basePrice, finalPrice, provider, ingestedAt)` exists only for the persistence adapter. It re-checks structure (I1–I9) and currency (I11) but **trusts the stored key and prices**: I10 and I12 are guaranteed by `Itinerary.from` when the row is written, and re-deriving on read would silently reprice history if the markup percentage changed. This is the one deliberate exception to I10/I12.
+
+`MAX_SEGMENTS` (4), `MIN_CONNECTION` (45 min), `MAX_CONNECTION` (24 h) and `MAX_TOTAL_DURATION` (72 h) are constants on `Itinerary`.
+
 ## 4. Itinerary Key (deduplication identity)
 
 Two offers represent the same product when they have the same:
@@ -160,7 +166,7 @@ Rejected offers are counted and reported per provider in the aggregation result;
 |---|---|---|
 | `OfferValidator` | Apply S1–S3, I1–I9 to an Offer | `Offer → OfferValidation` |
 | `ItineraryDeduplicator` | Apply DeduplicationPolicy | `Collection<Offer> → Collection<Offer>` (one per key) |
-| `ItineraryFactory` | Build an `Itinerary` from a winning Offer + MarkupPolicy | `(Offer, MarkupPolicy) → Itinerary` |
+| `ItineraryFactory` | Build an `Itinerary` from a winning Offer + MarkupPolicy | `(Offer) → Itinerary` (holds the `MarkupPolicy` and a `Clock` for `ingestedAt`; `Itinerary.from(Offer, MarkupPolicy, Instant)` is the underlying factory) |
 
 All three are stateless, framework-free, and composed by the application-layer `AggregateFlightsService`.
 

@@ -217,6 +217,8 @@ Conventions:
 ERR 400 missing parameter: o
 ```
 
+A present but malformed parameter (e.g. `dt=2026-11-20`) uses the same shape: `ERR 400 invalid parameter: dt`.
+
 **Response `500`** — chaos, `Content-Type: text/plain`
 
 ```

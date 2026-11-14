@@ -75,6 +75,9 @@ Each invariant must be enforced in the constructor/factory of the owning type an
 - S2. `arrivalAt` is strictly after `departureAt` (otherwise it is a Dead Leg).
 - S3. Duration does not exceed 20 hours (sanity bound; longer values are treated as data errors).
 
+### Offer
+- O1. `basePrice.currency` equals the **reference currency** of the aggregation. The reference currency is a constructor argument of `OfferValidator` (infrastructure configures it; the domain never reads configuration). `Offer` itself accepts any currency: O1 is a pipeline rule, enforced by the validator, not by the `Offer` constructor.
+
 ### Itinerary
 - I1. Has at least one Segment.
 - I2. Has at most 4 Segments (3 connections).
@@ -89,9 +92,9 @@ Each invariant must be enforced in the constructor/factory of the owning type an
 - I11. `finalPrice.currency == basePrice.currency`.
 - I12. `key` is derived from segments; it is never supplied externally.
 
-A violation of S1–S3 or I1–I9 does not throw inside the aggregation pipeline: the Offer is **rejected** with a typed reason (see section 6). Direct construction of an invalid `Itinerary` or `Segment` outside the pipeline throws `InvalidItineraryException` / `InvalidSegmentException`.
+A violation of O1, S1–S3 or I1–I9 does not throw inside the aggregation pipeline: the Offer is **rejected** with a typed reason (see section 6). Direct construction of an invalid `Itinerary` or `Segment` outside the pipeline throws `InvalidItineraryException` / `InvalidSegmentException`.
 
-Exceptions: every type throws its own unchecked `DomainException` subtype: `InvalidAirportException` (A1), `InvalidCarrierException` (C1), `InvalidFlightNumberException` (F1), `InvalidPriceException` (P1–P4, including cross-currency arithmetic), `InvalidSegmentException` (S1–S3), `InvalidOfferException` (null provider/price, null or empty segments), `InvalidItineraryKeyException` (empty segments, malformed stored key), `InvalidItineraryException` (I1–I12), `InvalidSearchException` (search criteria, filter, cursor, page and search result), `InvalidAggregationException` (provider outcome, aggregation result, unavailable-provider status).
+Exceptions: every type throws its own unchecked `DomainException` subtype: `InvalidAirportException` (A1), `InvalidCarrierException` (C1), `InvalidFlightNumberException` (F1), `InvalidPriceException` (P1–P4, including cross-currency arithmetic), `InvalidSegmentException` (S1–S3), `InvalidOfferException` (null provider/price, null or empty segments, validator built without a reference currency), `InvalidItineraryKeyException` (empty segments, malformed stored key), `InvalidItineraryException` (I1–I12), `InvalidSearchException` (search criteria, filter, cursor, page, search result and lock token), `InvalidAggregationException` (provider outcome, aggregation result, unavailable-provider status).
 
 ### Rehydration
 
@@ -133,7 +136,7 @@ Given a collection of valid Offers:
 3. Tie-break: deterministic by `Provider` enum order (ALPHA < BETA < GAMMA) so results are reproducible.
 4. Record which provider supplied the winning price (`Itinerary.source`).
 
-Complexity requirement: grouping is O(n) in the number of offers (hash-based), with no pairwise comparison. The output is the k distinct survivors sorted by key string (O(k log k)), so it is reproducible. Same provider and price: the earlier final arrival wins. All offers are assumed to share one currency (§10).
+Complexity requirement: grouping is O(n) in the number of offers (hash-based), with no pairwise comparison. The output is the k distinct survivors sorted by key string (O(k log k)), so it is reproducible. Same provider and price: the earlier final arrival wins. All offers share one currency: O1 is checked before deduplication (§10).
 
 ## 6. Validation outcomes
 
@@ -145,6 +148,7 @@ sealed interface OfferValidation
   record Rejected(Offer offer, RejectionReason reason)
 
 enum RejectionReason
+  CURRENCY_MISMATCH             (O1)
   DEAD_LEG_SAME_AIRPORT         (S1)
   DEAD_LEG_NON_POSITIVE_DURATION (S2)
   SEGMENT_DURATION_EXCEEDED     (S3)
@@ -161,21 +165,21 @@ enum RejectionReason
 Rejected offers are counted and reported per provider in the aggregation result; they are not persisted.
 
 Which component raises which reason:
-- `OfferValidator` raises TOO_MANY_SEGMENTS, ORIGIN_EQUALS_DESTINATION, AIRPORT_MISMATCH_AT_CONNECTION, CONNECTION_OVERLAP, CONNECTION_TOO_SHORT, CONNECTION_TOO_LONG and TOTAL_DURATION_EXCEEDED.
+- `OfferValidator` raises CURRENCY_MISMATCH, TOO_MANY_SEGMENTS, ORIGIN_EQUALS_DESTINATION, AIRPORT_MISMATCH_AT_CONNECTION, CONNECTION_OVERLAP, CONNECTION_TOO_SHORT, CONNECTION_TOO_LONG and TOTAL_DURATION_EXCEEDED.
 - NO_SEGMENTS is never raised by the validator, because `Offer` rejects empty lists; it only surfaces as `InvalidItineraryException` from `Itinerary.rehydrate`.
 - DEAD_LEG_SAME_AIRPORT, DEAD_LEG_NON_POSITIVE_DURATION and SEGMENT_DURATION_EXCEEDED are enforced by the `Segment` constructor, so an `Offer` can never hold such a segment. An adapter that fails to build a `Segment` reads `InvalidSegmentException.reason()` and counts the offer under that reason.
-- Order of checks (first failure wins, one shared implementation in `Itinerary`): I1, I2, I4, then for each consecutive pair in segment order I5, I6, I7, I8, and finally I9.
+- Order of checks (first failure wins): O1 in `OfferValidator`, then one shared implementation in `Itinerary`: I1, I2, I4, then for each consecutive pair in segment order I5, I6, I7, I8, and finally I9.
 - `OfferValidator.validateAll` returns a `ValidationSummary(valid, rejectedByReason)`.
 
 ## 7. Domain Services
 
 | Service | Responsibility | Inputs → Outputs |
 |---|---|---|
-| `OfferValidator` | Apply I2, I4–I9 to an Offer (S1–S3 are enforced by `Segment`, I1 by `Offer`) | `Offer → OfferValidation` |
+| `OfferValidator` | Apply O1, then I2, I4–I9 to an Offer (S1–S3 are enforced by `Segment`, I1 by `Offer`). Holds the reference currency | `Offer → OfferValidation` |
 | `ItineraryDeduplicator` | Apply DeduplicationPolicy | `Collection<Offer> → Collection<Offer>` (one per key) |
 | `ItineraryFactory` | Build an `Itinerary` from a winning Offer + MarkupPolicy | `(Offer) → Itinerary` (holds the `MarkupPolicy` and a `Clock` for `ingestedAt`; `Itinerary.from(Offer, MarkupPolicy, Instant)` is the underlying factory) |
 
-All three are stateless, framework-free, and composed by the application-layer `AggregateFlightsService`.
+All three hold no mutable state, are framework-free, and composed by the application-layer `AggregateFlightsService`.
 
 ## 8. Ports
 
@@ -204,8 +208,8 @@ ItineraryRepositoryPort
 
 FreshnessPort
   Freshness status(SearchCriteria criteria)
-  boolean tryLock(SearchCriteria criteria, Duration ttl)
-  void release(SearchCriteria criteria)
+  Optional<LockToken> tryLock(SearchCriteria criteria, Duration ttl)   // empty when another caller holds the lock
+  void release(SearchCriteria criteria, LockToken token)             // no-op unless token is the current holder
   void markFresh(SearchCriteria criteria, AggregationResult result, Duration ttl)
   Optional<AggregationResult> lastResult(SearchCriteria criteria)
 ```
@@ -227,6 +231,7 @@ AggregationResult (int persisted, Map<Provider, ProviderOutcome> outcomes, Insta
 ProviderOutcome   (ProviderStatus status, int offersReceived, int offersRejected, Duration elapsed)   — succeeded() == (status is OK)
 ProviderStatus    Enum — OK, TIMEOUT, ERROR, CIRCUIT_OPEN
 Freshness         Enum — FRESH, STALE, REFRESHING, MISSING
+LockToken         (String value)   — non-blank; identifies one holder of the aggregation lock
 ProviderUnavailableException (Provider provider, ProviderStatus status)   — status is never OK
 ```
 
@@ -244,6 +249,12 @@ State of the data for one `SearchCriteria`, as seen by `SearchItinerariesUseCase
 | `MISSING` | Never aggregated for this criteria | Aggregate synchronously, then query |
 
 A request that carries a `PageCursor` never triggers aggregation (pages must stay consistent with page 1).
+
+### Aggregation lock ownership
+
+The aggregation lock for one `SearchCriteria` expires after its TTL so a crashed holder cannot block refreshes forever. An aggregation can therefore outlive its lock, and another caller can acquire it in the meantime. To keep the first caller from deleting the second caller's lock, `tryLock` returns a `LockToken` that identifies the holder, and `release` only removes the lock when the token still matches (compare-and-delete in the adapter). Releasing an expired or foreign lock is a silent no-op.
+
+An aggregation in which every Provider failed is not marked fresh, so the next search retries; `lastOutcomes` prefers the aggregation just performed over a stored result.
 
 ### Optional convention
 
@@ -276,7 +287,7 @@ Resilience rules the application layer must honour:
 
 ## 10. Out of scope (explicit)
 
-- Currency conversion: all providers are assumed to quote in the same currency per search. Mixed currencies within one aggregation are rejected at the adapter level.
+- Currency conversion: an aggregation has one reference currency. An Offer quoted in any other currency is rejected by `OfferValidator` with CURRENCY_MISMATCH (O1) and counted against its provider, so the `ItineraryDeduplicator` never compares prices of different currencies.
 - Cabin class, baggage, fare rules.
 - Fuzzy deduplication (near-identical itineraries with slightly different times).
 - Booking, availability decrement, seat maps.

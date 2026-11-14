@@ -2,6 +2,7 @@ package io.github.jerojasol.flights.domain.model;
 
 /** Typed reason why an Offer cannot become an Itinerary (domain-model.md §6). */
 public enum RejectionReason {
+    CURRENCY_MISMATCH,
     DEAD_LEG_SAME_AIRPORT,
     DEAD_LEG_NON_POSITIVE_DURATION,
     SEGMENT_DURATION_EXCEEDED,

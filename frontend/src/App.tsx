@@ -1,17 +1,10 @@
 import { useEffect, useState } from 'react'
 import { SearchForm, type FieldErrors, type FieldName } from './components/SearchForm'
-import { ResultsList } from './components/ResultsList'
+import { SearchResults } from './components/SearchResults'
 import { parseSearch, serializeSearch, type SearchState } from './searchState'
 import { useItinerarySearch } from './useItinerarySearch'
 
 const FIELDS: readonly string[] = ['origin', 'destination', 'date', 'maxPrice', 'carrier']
-
-function describeFilters(state: SearchState): string {
-  const parts = [`${state.origin} → ${state.destination}`, state.date]
-  if (state.maxPrice !== undefined) parts.push(`max €${state.maxPrice}`)
-  if (state.carrier) parts.push(`carrier ${state.carrier}`)
-  return parts.join(', ')
-}
 
 export default function App() {
   const [search, setSearch] = useState<SearchState | null>(() => parseSearch(window.location.search))
@@ -76,21 +69,8 @@ export default function App() {
         </div>
       )}
 
-      {search && result.isSuccess && result.items.length === 0 && (
-        <div className="empty">
-          <p>No itineraries found</p>
-          <p className="muted small">Filters: {describeFilters(search)}</p>
-        </div>
-      )}
-
-      {result.items.length > 0 && (
-        <ResultsList
-          items={result.items}
-          hasNextPage={result.hasNextPage}
-          isFetchingNextPage={result.isFetchingNextPage}
-          nextPageError={result.isFetchNextPageError ? result.error : null}
-          onLoadMore={() => void result.fetchNextPage()}
-        />
+      {search && result.pageCount > 0 && (
+        <SearchResults key={serializeSearch(search)} params={search} result={result} />
       )}
     </main>
   )

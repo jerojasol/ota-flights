@@ -17,7 +17,9 @@ export function useItinerarySearch(params: SearchState | null) {
 
   const firstPage = query.data?.pages[0]
   return {
+    queryKey: ['itineraries', params] as const,
     items: query.data?.pages.flatMap((page) => page.items) ?? [],
+    pageCount: query.data?.pages.length ?? 0,
     freshness: firstPage?.freshness,
     aggregatedAt: firstPage?.aggregatedAt ?? null,
     providers: firstPage?.providers ?? {},

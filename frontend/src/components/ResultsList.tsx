@@ -1,19 +1,23 @@
+import type { ReactNode } from 'react'
 import type { ApiError } from '../api/client'
 import type { Itinerary } from '../api/types'
 import { ItineraryCard } from './ItineraryCard'
 
 interface Props {
   items: Itinerary[]
+  badge?: ReactNode
   hasNextPage: boolean
   isFetchingNextPage: boolean
   nextPageError: ApiError | null
   onLoadMore: () => void
 }
 
-export function ResultsList({ items, hasNextPage, isFetchingNextPage, nextPageError, onLoadMore }: Props) {
+export function ResultsList({ items, badge, hasNextPage, isFetchingNextPage, nextPageError, onLoadMore }: Props) {
   return (
     <section aria-label="Results">
-      <p className="count">Showing {items.length} itineraries</p>
+      <p className="count">
+        Showing {items.length} itineraries {badge}
+      </p>
       <ul className="results">
         {items.map((itinerary) => (
           <li key={itinerary.id}>

@@ -693,3 +693,20 @@ Verification after the corrections: `./mvnw verify` passed (406 tests including 
 
 Other notes: `@testing-library/dom` (a peer of `@testing-library/react`) and `@types/node` `^24` were added as implied dependencies. `npm audit` reports 7 moderate advisories, all in the dev-only `typescript-eslint` chain, and they were left as is. Verified: `node -v` = v24.22.3; `npm ci`, lint, 11 tests and build all passed. Through the Vite proxy, `/api/itineraries?...&limit=1` returned `"FRESH"`, and an invalid origin returned `application/problem+json`. Not committed.
 **Artifacts:** `frontend/` (package.json, package-lock.json, vite.config.ts, eslint.config.js, tsconfig*.json, index.html, src/**, AGENTS.md), `README.md`, `docs/ai-log.md`.
+
+## 2026-11-14 — G2: search form, results list and keyset "load more"
+
+**Intent:** Build the one-page search UI: URL-driven search state, form, results with cursor pagination, and every loading and error state.
+**Prompt (summary):** `frontend/prompts/02-search-and-results.md`: `searchState.ts` (URLSearchParams, `pushState`, `popstate`, shareable links); `SearchForm` with client validation that mirrors the backend; `useItinerarySearch` built on `useInfiniteQuery` (key `["itineraries", params]`, `limit: 20`, metadata from the first page); `ResultsList`/`ItineraryCard`; idle, first-load, empty, 400, other-error and load-more-error states; no stale overwrite; 8 required tests.
+**Generated:**
+- `src/searchState.ts`, `src/useItinerarySearch.ts`, `src/components/{SearchForm,ResultsList,ItineraryCard}.tsx`, the rewritten `src/App.tsx`, and styles. Client validation regexes were copied from `ItinerarySearchRequest.java` (`[A-Za-z]{3}`, `[A-Za-z0-9]{2}`, `@Positive`), plus a client-only check that origin ≠ destination.
+- On `popstate`, the form is remounted with a new `key` so it refills from the URL. Problem `errors` keys that match a form field go to that field; other keys, or a 400 with no `errors`, go to a summary above the form. The "Load more" button becomes "Retry" after a load-more error, and the items already shown stay.
+- `src/App.test.tsx` has 11 tests: the 8 required ones, plus the idle hint, load-more error with retry, and a correlation id. The race test holds the first (MAD-JFK) response open, switches to BCN-LHR with back/forward navigation, then releases the old response.
+**Human review / corrections:** Accepted. Notes:
+1. The first test run failed 8 tests because Testing Library's automatic cleanup only registers with Vitest globals, which are off. I added `cleanup()` in `src/test/setup.ts`.
+2. Mutation check: with `params` temporarily removed from the query key, the race test failed. Restored.
+3. The race test switches searches with `popstate` instead of a second form submit, because the Search button is disabled while the first page is loading (as the prompt requires).
+4. The live acceptance check used `curl` through the Vite proxy with the same requests the UI sends, because no browser was available in the session. It was not a click-through in a browser and not React Query devtools. MAD→JFK 2026-11-20: page 1 had 20 items (`FRESH`); the cursor page had 20 more; 40 unique ids, non-decreasing prices. `maxPrice=1`: 0 items, `nextCursor: null`, which the UI shows as the empty state with the filters ("No itineraries found", "MAD → JFK, 2026-11-20, max €1").
+
+Verified: lint clean, 22 tests passed, build OK. Not committed.
+**Artifacts:** `frontend/src/App.tsx`, `frontend/src/App.test.tsx`, `frontend/src/searchState.ts`, `frontend/src/useItinerarySearch.ts`, `frontend/src/components/`, `frontend/src/styles.css`, `frontend/src/test/setup.ts`, `docs/ai-log.md`.

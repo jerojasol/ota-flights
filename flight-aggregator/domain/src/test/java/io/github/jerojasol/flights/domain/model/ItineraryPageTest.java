@@ -24,7 +24,7 @@ class ItineraryPageTest {
     @Test
     void should_copy_items_when_page_is_created() {
         Itinerary itinerary = Itinerary.from(offer(Provider.ALPHA, "10.00", chain("2026-11-20T07:35:00Z", 480)),
-                new PercentageMarkupPolicy(java.math.BigDecimal.ONE));
+                new PercentageMarkupPolicy(java.math.BigDecimal.ONE), java.time.Instant.parse("2026-11-14T10:00:00Z"));
         List<Itinerary> source = new java.util.ArrayList<>(List.of(itinerary));
 
         ItineraryPage page = new ItineraryPage(source, Optional.of(new PageCursor(price("10.10"), itinerary.key())));

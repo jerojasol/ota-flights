@@ -264,8 +264,20 @@ Content-Type: application/json
 
 Returns the effective configuration. Intended for live demos ("watch the aggregator survive Beta dying").
 
+Any subset of the four fields may be sent; omitted fields keep their current value. Durations accept the simple form (`2000ms`, `2s`) or ISO-8601 (`PT2S`). The response always uses milliseconds:
+
+```json
+{ "enabled": true, "latencyMin": "100ms", "latencyMax": "2000ms", "errorRate": 0.5 }
+```
+
+An invalid result (`errorRate` outside `[0, 1]`, negative latency, `latencyMin > latencyMax`, `latencyMax > 30s`, unparseable duration) is rejected with `400` and the configuration is left unchanged:
+
+```json
+{ "error": "BAD_REQUEST", "message": "errorRate must be in [0, 1]" }
+```
+
 ```
 GET /admin/chaos
 ```
 
-Returns the current configuration.
+Returns the current configuration, same shape as above.

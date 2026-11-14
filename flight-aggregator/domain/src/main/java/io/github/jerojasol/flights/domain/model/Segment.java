@@ -18,13 +18,16 @@ public record Segment(
             throw new InvalidSegmentException("Segment fields are required");
         }
         if (departureAirport.equals(arrivalAirport)) {
-            throw new InvalidSegmentException("Dead leg: departure and arrival airport are both " + departureAirport.code());
+            throw new InvalidSegmentException(RejectionReason.DEAD_LEG_SAME_AIRPORT,
+                    "Dead leg: departure and arrival airport are both " + departureAirport.code());
         }
         if (!arrivalAt.isAfter(departureAt)) {
-            throw new InvalidSegmentException("Dead leg: arrival " + arrivalAt + " is not after departure " + departureAt);
+            throw new InvalidSegmentException(RejectionReason.DEAD_LEG_NON_POSITIVE_DURATION,
+                    "Dead leg: arrival " + arrivalAt + " is not after departure " + departureAt);
         }
         if (Duration.between(departureAt, arrivalAt).compareTo(MAX_DURATION) > 0) {
-            throw new InvalidSegmentException("Segment duration exceeds " + MAX_DURATION.toHours() + " hours");
+            throw new InvalidSegmentException(RejectionReason.SEGMENT_DURATION_EXCEEDED,
+                    "Segment duration exceeds " + MAX_DURATION.toHours() + " hours");
         }
     }
 

@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Aggregate root: a complete journey from origin to destination sold at a Price. */
 public final class Itinerary {
@@ -60,47 +61,68 @@ public final class Itinerary {
     }
 
     private static void validateStructure(List<Segment> segments) {
+        Optional<Violation> violation = findViolation(segments);
+        if (violation.isPresent()) {
+            throw new InvalidItineraryException(violation.get().reason(), violation.get().message());
+        }
+    }
+
+    /** A broken structural rule: which one, and a human-readable detail. */
+    record Violation(RejectionReason reason, String message) {
+    }
+
+    /**
+     * Single source of the structural rules, shared with {@link OfferValidator}. Total: never throws, returns the
+     * first violation in the documented order: I1, I2, I4, then per consecutive pair in segment order I5, I6, I7, I8,
+     * and finally I9.
+     */
+    static Optional<Violation> findViolation(List<Segment> segments) {
         if (segments == null || segments.isEmpty()) {
-            throw new InvalidItineraryException(RejectionReason.NO_SEGMENTS, "Itinerary has no segments");
+            return Optional.of(new Violation(RejectionReason.NO_SEGMENTS, "Itinerary has no segments"));
         }
         if (segments.size() > MAX_SEGMENTS) {
-            throw new InvalidItineraryException(RejectionReason.TOO_MANY_SEGMENTS,
-                    "Itinerary has " + segments.size() + " segments, maximum is " + MAX_SEGMENTS);
-        }
-        for (int i = 0; i + 1 < segments.size(); i++) {
-            validateConnection(segments.get(i), segments.get(i + 1));
+            return Optional.of(new Violation(RejectionReason.TOO_MANY_SEGMENTS,
+                    "Itinerary has " + segments.size() + " segments, maximum is " + MAX_SEGMENTS));
         }
         Segment first = segments.getFirst();
         Segment last = segments.getLast();
         if (first.departureAirport().equals(last.arrivalAirport())) {
-            throw new InvalidItineraryException(RejectionReason.ORIGIN_EQUALS_DESTINATION,
-                    "Origin equals destination: " + first.departureAirport().code());
+            return Optional.of(new Violation(RejectionReason.ORIGIN_EQUALS_DESTINATION,
+                    "Origin equals destination: " + first.departureAirport().code()));
+        }
+        for (int i = 0; i + 1 < segments.size(); i++) {
+            Optional<Violation> connection = connectionViolation(segments.get(i), segments.get(i + 1));
+            if (connection.isPresent()) {
+                return connection;
+            }
         }
         if (Duration.between(first.departureAt(), last.arrivalAt()).compareTo(MAX_TOTAL_DURATION) > 0) {
-            throw new InvalidItineraryException(RejectionReason.TOTAL_DURATION_EXCEEDED,
-                    "Total duration exceeds " + MAX_TOTAL_DURATION.toHours() + " hours");
+            return Optional.of(new Violation(RejectionReason.TOTAL_DURATION_EXCEEDED,
+                    "Total duration exceeds " + MAX_TOTAL_DURATION.toHours() + " hours"));
         }
+        return Optional.empty();
     }
 
-    private static void validateConnection(Segment previous, Segment next) {
+    private static Optional<Violation> connectionViolation(Segment previous, Segment next) {
         if (!previous.arrivalAirport().equals(next.departureAirport())) {
-            throw new InvalidItineraryException(RejectionReason.AIRPORT_MISMATCH_AT_CONNECTION,
+            return Optional.of(new Violation(RejectionReason.AIRPORT_MISMATCH_AT_CONNECTION,
                     "Segment arrives at " + previous.arrivalAirport().code()
-                            + " but next departs from " + next.departureAirport().code());
+                            + " but next departs from " + next.departureAirport().code()));
         }
         if (!next.departureAt().isAfter(previous.arrivalAt())) {
-            throw new InvalidItineraryException(RejectionReason.CONNECTION_OVERLAP,
-                    "Next segment departs at or before the previous arrival");
+            return Optional.of(new Violation(RejectionReason.CONNECTION_OVERLAP,
+                    "Next segment departs at or before the previous arrival"));
         }
         Duration connection = Duration.between(previous.arrivalAt(), next.departureAt());
         if (connection.compareTo(MIN_CONNECTION) < 0) {
-            throw new InvalidItineraryException(RejectionReason.CONNECTION_TOO_SHORT,
-                    "Connection of " + connection.toMinutes() + " minutes is below " + MIN_CONNECTION.toMinutes());
+            return Optional.of(new Violation(RejectionReason.CONNECTION_TOO_SHORT,
+                    "Connection of " + connection.toMinutes() + " minutes is below " + MIN_CONNECTION.toMinutes()));
         }
         if (connection.compareTo(MAX_CONNECTION) > 0) {
-            throw new InvalidItineraryException(RejectionReason.CONNECTION_TOO_LONG,
-                    "Connection of " + connection.toMinutes() + " minutes exceeds " + MAX_CONNECTION.toMinutes());
+            return Optional.of(new Violation(RejectionReason.CONNECTION_TOO_LONG,
+                    "Connection of " + connection.toMinutes() + " minutes exceeds " + MAX_CONNECTION.toMinutes()));
         }
+        return Optional.empty();
     }
 
     private static void requireSameCurrency(Price base, Price derived) {

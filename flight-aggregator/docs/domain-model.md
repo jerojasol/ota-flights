@@ -133,7 +133,7 @@ Given a collection of valid Offers:
 3. Tie-break: deterministic by `Provider` enum order (ALPHA < BETA < GAMMA) so results are reproducible.
 4. Record which provider supplied the winning price (`Itinerary.source`).
 
-Complexity requirement: O(n) in the number of offers (hash-based grouping). No pairwise comparison.
+Complexity requirement: grouping is O(n) in the number of offers (hash-based), with no pairwise comparison. The output is the k distinct survivors sorted by key string (O(k log k)), so it is reproducible. Same provider and price: the earlier final arrival wins. All offers are assumed to share one currency (§10).
 
 ## 6. Validation outcomes
 
@@ -160,11 +160,18 @@ enum RejectionReason
 
 Rejected offers are counted and reported per provider in the aggregation result; they are not persisted.
 
+Which component raises which reason:
+- `OfferValidator` raises TOO_MANY_SEGMENTS, ORIGIN_EQUALS_DESTINATION, AIRPORT_MISMATCH_AT_CONNECTION, CONNECTION_OVERLAP, CONNECTION_TOO_SHORT, CONNECTION_TOO_LONG and TOTAL_DURATION_EXCEEDED.
+- NO_SEGMENTS is never raised by the validator, because `Offer` rejects empty lists; it only surfaces as `InvalidItineraryException` from `Itinerary.rehydrate`.
+- DEAD_LEG_SAME_AIRPORT, DEAD_LEG_NON_POSITIVE_DURATION and SEGMENT_DURATION_EXCEEDED are enforced by the `Segment` constructor, so an `Offer` can never hold such a segment. An adapter that fails to build a `Segment` reads `InvalidSegmentException.reason()` and counts the offer under that reason.
+- Order of checks (first failure wins, one shared implementation in `Itinerary`): I1, I2, I4, then for each consecutive pair in segment order I5, I6, I7, I8, and finally I9.
+- `OfferValidator.validateAll` returns a `ValidationSummary(valid, rejectedByReason)`.
+
 ## 7. Domain Services
 
 | Service | Responsibility | Inputs → Outputs |
 |---|---|---|
-| `OfferValidator` | Apply S1–S3, I1–I9 to an Offer | `Offer → OfferValidation` |
+| `OfferValidator` | Apply I2, I4–I9 to an Offer (S1–S3 are enforced by `Segment`, I1 by `Offer`) | `Offer → OfferValidation` |
 | `ItineraryDeduplicator` | Apply DeduplicationPolicy | `Collection<Offer> → Collection<Offer>` (one per key) |
 | `ItineraryFactory` | Build an `Itinerary` from a winning Offer + MarkupPolicy | `(Offer) → Itinerary` (holds the `MarkupPolicy` and a `Clock` for `ingestedAt`; `Itinerary.from(Offer, MarkupPolicy, Instant)` is the underlying factory) |
 

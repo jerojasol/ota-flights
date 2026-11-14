@@ -9,6 +9,9 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/flights}
     username: ${DB_USERNAME:flights}
     password: ${DB_PASSWORD:flights}
+    hikari:
+      # Fail fast at startup when Postgres is absent, instead of waiting 30 s. Milliseconds: Hikari binds a long.
+      connection-timeout: 5000
 
   jpa:
     open-in-view: false
@@ -23,19 +26,30 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # Lettuce waits 60 s per command by default; a search must not block that long when Redis is unreachable.
+      timeout: 500ms
+      connect-timeout: 500ms
 
 server:
   port: ${SERVER_PORT:8080}
+  shutdown: graceful
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
   endpoint:
     health:
       probes:
         enabled: true
+      # Shows the provider circuit breakers to operators. No authentication in this delivery (SOLUTION.md §6).
+      show-details: always
+      group:
+        # Liveness is the container healthcheck: it must not include Redis, whose outage only degrades the service.
+        # Readiness includes Postgres: without it nothing can be served.
+        readiness:
+          include: readinessState,db
 
 providers:
   alpha:
@@ -48,6 +62,13 @@ providers:
 
 aggregation:
   markup-percentage: ${MARKUP_PERCENTAGE:5}
+  reference-currency: ${REFERENCE_CURRENCY:EUR}
   freshness-ttl: ${FRESHNESS_TTL:10m}
   lock-ttl: ${LOCK_TTL:30s}
-  reference-currency: ${REFERENCE_CURRENCY:EUR}
+  provider-budget: ${PROVIDER_BUDGET:3500ms}
+  warm-routes: ${WARM_ROUTES:MAD-JFK,MAD-LHR,BCN-JFK}
+  warm-interval: ${WARM_INTERVAL:PT10M}
+
+logging:
+  level:
+    io.github.jerojasol: INFO

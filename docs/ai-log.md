@@ -577,3 +577,48 @@ Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 applicat
 - `Optional` is used only as a return type, within AGENTS.md §6.
 **Human review / corrections:** The MAJOR finding came from the AI's D5 design: the prompt said "inject only `AggregateFlightsUseCase`", and the AI followed it without checking the lock and freshness rules in §8. The human approved adding a domain port to fix it. Mutation checks: with a blanket `DomainException → 422` handler restored temporarily, the new 500 test failed; without the cursor currency check, the USD cursor test failed. Both restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 41 application, 79 infrastructure unit tests, 47 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
 **Artifacts:** `flight-aggregator/docs/domain-model.md`, `flight-aggregator/domain/src/main/java/io/github/jerojasol/flights/domain/port/in/RefreshItinerariesUseCase.java`, `flight-aggregator/application/src/main/java/io/github/jerojasol/flights/application/RefreshItinerariesService.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/RefreshItinerariesServiceTest.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/web/{InvalidRequestException,AggregationInProgressException,SearchRequestMapper,AggregationController,AggregationsApi,ApiExceptionHandler}.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/web/{ItineraryControllerTest,AggregationControllerTest}.java`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — D6: wiring, startup checks, scheduler, health, Dockerfile
+
+**Intent:** Make the service start: wire domain and application explicitly, add scheduled ingestion and health, build the container, and prove the whole service with one smoke test, including a Redis outage.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/06-wiring-and-boot.md`, as written by the human, plus 12 gaps the AI found by checking the prompt against the code and the D5 review notes, appended to the prompt before execution with the human's instruction to do so.
+**Gaps added to the prompt:**
+1. Lettuce's 60 s default command timeout.
+2. Hikari's 30 s default startup wait.
+3. `providers.timeout` must be shorter than the fan-out budget.
+4. The refresh executor needs a bounded queue, not only bounded threads.
+5. One `Clock` and one set of TTLs.
+6. Exactly one adapter per Provider, failing fast if one is missing.
+7. Scheduler details: `@EnableScheduling`, per-route catch, UTC dates, route validation, disabled in tests.
+8. `warmIntervalMinutes` vs a Duration.
+9. The outcome logger as a decorator.
+10. Health groups and details.
+11. ArchUnit rule 7 for the breaker health indicators.
+12. Graceful shutdown.
+
+Also flagged: there is no root `docker-compose.yml`, which `../AGENTS.md` requires; it is out of scope for this project.
+**Generated:**
+- `config/UseCaseConfiguration`, `config/SchedulingConfiguration`; `config/AggregationProperties` rewritten with every startup check; `config/ProviderConfiguration` (concrete adapter types, one health indicator per provider); `config/CacheConfiguration` (Lettuce rejects commands while disconnected).
+- `observability/ProviderOutcomeLogger`, `scheduling/WarmRoutesScheduler`, `provider/ProviderCircuitState`, `provider/ProviderCircuitHealthIndicator`; adapters and `ProviderResilience` expose `circuitState()`.
+- `application.yaml` (aggregation properties, timeouts, actuator exposure and groups, graceful shutdown, logging) and `application-test.yaml` (no warm routes).
+- `Dockerfile` and `.dockerignore`.
+- Tests: `AggregationPropertiesTest` (6), `WarmRoutesSchedulerTest` (3), `FlightAggregatorApplicationIT`.
+- `docs/SOLUTION.md` §6: no refresh path at all during a Redis outage; no authentication covers the admin endpoint and actuator.
+**Decisions:**
+- **Lettuce rejects commands while disconnected** (`DisconnectedBehavior.REJECT_COMMANDS`). Found while writing the smoke test: by default Lettuce queues commands during a disconnect and each waits for the command timeout, so a search with Redis down would have taken about 1.5 s of Redis waits even with a 500 ms timeout. It now fails at once and the adapter degrades immediately.
+- **The outcome logger is a decorator** of `AggregateFlightsUseCase`, so every path (cold miss, background refresh, admin refresh, scheduler) is logged once and `application` stays free of logging.
+- **Provider health is always UP**, with `circuit` and `degraded` details, so overall health never goes DOWN because a provider is down.
+- **The scheduler uses `RefreshItinerariesUseCase`**: same lock as searches and admin refreshes, so it never races them.
+- **Plain jar in the image**, not layered extraction, which was not needed for this delivery.
+**Human review / corrections:** The human asked the AI to look for wiring gaps, add them to the prompt and execute it. AI errors during execution:
+- `spring.datasource.hikari.connection-timeout: 5s` failed binding; Hikari binds a `long` in milliseconds. Fixed to `5000`.
+- The Lettuce queuing behaviour was not in the AI's first list of gaps; the smoke test's timing assertion made it visible.
+
+Verified:
+- `./mvnw verify` passes (223 domain, 41 application, 88 infrastructure unit tests, 48 ITs); `/check-arch` passes (ArchUnit 10/10).
+- Smoke IT story: cold search FRESH with 3 deduplicated itineraries from 3 providers; Redis stopped → liveness UP, `/actuator/health` 503, search 200 STALE in under 2 s, admin refresh 409 with no provider call.
+- `docker build -t flight-aggregator .` succeeds; without Postgres the container fails in 5 s with "Connection to 127.0.0.1:1 refused", running as uid 10001.
+
+Not committed.
+**Known gaps:** no root `docker-compose.yml` (repository-level step); no authentication on admin and actuator; the aggregation-under-lock sequence still exists in three places (D5 MINOR, deferred).
+**Artifacts:** `flight-aggregator/prompts/infrastructure/06-wiring-and-boot.md`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/{config,observability,scheduling,provider}/**`, `flight-aggregator/infrastructure/src/main/resources/application.yaml`, `flight-aggregator/infrastructure/src/test/resources/application-test.yaml`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/{FlightAggregatorApplicationIT,config/AggregationPropertiesTest,scheduling/WarmRoutesSchedulerTest}.java`, `flight-aggregator/Dockerfile`, `flight-aggregator/.dockerignore`, `docs/SOLUTION.md`.

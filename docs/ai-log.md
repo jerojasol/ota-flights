@@ -403,3 +403,83 @@ Proposed wording for `provider-contracts.md`, Beta section: "`Itineraries/@count
 **Human review / corrections:** The human approved all three findings and set the exact rules, including that the breaker still records contract breaches and that truncated Gamma streams stay retryable. Verified: with the retry exclusion removed temporarily, all three new ITs failed (`Expected exactly 1 requests … but received 2`); with the gap check removed temporarily, the DST gap test failed. Both were restored. Note on the process: the first regression check removed both fixes at once, and Surefire stopped on the mapper test before Failsafe ran, so the retry change was checked again on its own. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 30 infrastructure unit tests, 27 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
 **Contract change:** the Beta section of `mock-providers/docs/provider-contracts.md` now documents how a consumer resolves daylight saving, and its limitation. The response format is unchanged, so `mock-providers` code and the exported fixtures are unaffected.
 **Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/{ProviderContractViolation,ProviderResilience}.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/alpha/AlphaResponseParser.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/beta/{BetaSearchResponse,BetaResponseParser,BetaOfferMapper}.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/{alpha/AlphaProviderAdapterIT,beta/BetaOfferMapperTest,beta/BetaProviderAdapterIT}.java`, `flight-aggregator/prompts/infrastructure/03-provider-adapter.md`, `mock-providers/docs/provider-contracts.md`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — D3 (Gamma): streamed CSV provider adapter
+
+**Intent:** Implement the last provider adapter: Gamma's streamed CSV, read line by line without buffering, with the three failure kinds agreed after Beta.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/03-provider-adapter.md` for Gamma: fixtures first; no DTO tree but a line parser plus a streaming reader that requires `#END`; `GammaOfferMapper` (cents, `yyyyMMddHHmm` UTC, `|` then `;`); client, adapter on the shared resilience; mapper tests and a WireMock IT.
+**Generated:**
+- Fixtures (`fixtures/gamma/`):
+  - `contract-example.csv`: the contract's example plus `#END`. It also serves as the trap fixture (`BA;0117`, `UX;0091`, a two-segment packed field).
+  - `error-500.txt`: the contract's text, as `.txt` because Gamma's errors are `text/plain`.
+  - `dead-legs.csv`.
+  - `malformed-entries.csv`: wrong field count, non-numeric cents, bad timestamp, a segment with five attributes, a blank line, and one valid line.
+  - `truncated-no-end-marker.csv`.
+  - The exported `two-itineraries.csv` and `empty.csv` were kept.
+- Code (`provider/gamma/`):
+  - `GammaLine` (raw strings) and `GammaLineParser` (shape only; private `MalformedLine`).
+  - `GammaStreamReader`: header check, data lines to a consumer, stop at `#END`; `TruncatedStream` when the stream ends early.
+  - `GammaOfferMapper`, `GammaClient`, `GammaProviderAdapter`, and a `gammaProvider` bean.
+- Tests: `GammaOfferMapperTest` (9) and `GammaProviderAdapterIT` (8, including a chunked stream via WireMock's `withChunkedDribbleDelay`).
+**Decisions:**
+- **Three failure kinds**, as agreed:
+  - one bad line → unmappable;
+  - wrong header, or data after `#END` → `ProviderContractViolation` (`ERROR`, not retried);
+  - stream ended before `#END` → `TruncatedStream` (`ERROR`, retried). An I/O error while reading becomes Spring's `ResourceAccessException` (`ERROR`, retried).
+- **An empty body is truncation, not a contract breach.** A stream cut before the header is the same transport failure as one cut before `#END`. Only a header that is present but wrong breaches the contract. This was the AI's first version wrong: `header == null` was a contract violation; it was corrected before the tests were written.
+- **A blank line between data lines counts as one unmappable line** (wrong field count), consistent with "one bad entry never fails the response".
+- **The client takes a reader callback instead of returning an `InputStream`.** The prompt suggested returning the stream, but then the connection either closes when `exchange` returns or stays open if a caller forgets to close it. The callback runs inside `exchange`, so the body is streamed and the connection always closes.
+- Error bodies are read up to 2 KB, since a 500 body should never be large.
+**Human review / corrections:** None yet. Verified:
+- With truncation temporarily thrown as `ProviderContractViolation`, the truncated IT failed (it expects a retry); it was then restored.
+- `GammaProviderAdapterIT` passed 3 runs in a row.
+- `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 39 infrastructure unit tests, 35 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+
+**Known limitation:** when the TimeLimiter abandons a slow export, the reading thread is not interrupted. It keeps reading until the stream ends or the backstop read timeout (2× budget) fires, so a very large export that keeps sending data can outlive its budget in the background, on a virtual thread.
+**Contract ambiguities (Gamma), not guessed:**
+1. The example in the contract has no `#END` line, though the conventions say `#END` marks a complete stream. The real mock sends it. The fixture follows the conventions and the mock.
+2. "Empty result: header line only" does not mention `#END`; the mock sends a header then `#END`.
+3. Whether a blank line may appear in the body.
+
+Proposed wording for `provider-contracts.md`, Gamma section: add `#END` as the last line of the example; "Empty result: the header line, then `#END`."; "There are no blank lines; every line between the header and `#END` is one itinerary."
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/gamma/**`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/ProviderConfiguration.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/gamma/**`, `flight-aggregator/infrastructure/src/test/resources/fixtures/gamma/{contract-example.csv,error-500.txt,dead-legs.csv,malformed-entries.csv,truncated-no-end-marker.csv}`.
+
+## 2026-11-14 — D3 (Gamma) follow-up: empty-result wording, blank lines, rejected requests, currency minor units
+
+**Intent:** Fix the four MINOR `domain-guardian` findings on D3 Gamma. Two of them change all three providers.
+**Prompt (summary):** Human approved all four, changing two of the AI's proposals:
+1. Contract: an empty result is the header plus `#END`, and `#END` is added to the example.
+2. Blank lines are skipped and not counted.
+3. 4xx: a new `ProviderRequestRejected` (not `ProviderContractViolation`) for 4xx other than 408 and 429, in all three clients. Not retried, and ignored by the circuit breaker, because the provider is healthy and the fault is in our request. `ProviderContractViolation` stays for unreadable 200 bodies and is still recorded. 408, 429 and 5xx remain retryable. The 400 ITs assert exactly one request and an unchanged breaker failure count. A fourth failure kind goes into the prompt.
+4. Currency scale from `getDefaultFractionDigits()`; a negative value (XXX, XAU) makes the line unmappable. Tests for JPY and XXX, and the 3-decimal rounding limitation in `SOLUTION.md` §6.
+**Generated:**
+- `mock-providers/docs/provider-contracts.md` (Gamma): `#END` closes the example; "Empty result: the header line followed by `#END`."
+- `GammaStreamReader` skips blank data lines without counting them. The `malformed-entries.csv` test now expects 4 unmappable (it was 5).
+- `infrastructure.provider.ProviderRequestRejected` and `ProviderRestClients.httpError(provider, status, body)`, now used by all three clients. In `ProviderResilience`: the retry predicate excludes it, `CircuitBreakerConfig.ignoreException(...)` ignores it, and a public `failedCalls()`. Each adapter has a package-private `circuitFailedCalls()` for the ITs.
+- Tests:
+  - The three 400 ITs (Alpha, Beta, Gamma): a 500 first (the breaker records 2), then a 400 → exactly 1 request, cause `ProviderRequestRejected`, failure count still 2.
+  - `ProviderRestClientsTest` (parameterised): 400/401/403/404/422 are rejected; 408/429/500/502/503 stay retryable.
+- `GammaOfferMapper.minorUnitDigits`: a non-ISO code or negative digits → `MalformedLine`. Tests: JPY `15000` → ¥15000; an XXX line is unmappable.
+- `docs/SOLUTION.md` §6: the scale-2 rounding of 3-decimal currencies (KWD) and the dropping of pseudo-currencies.
+- `prompts/infrastructure/03-provider-adapter.md`: "Four failure kinds"; the new kind is rejected requests (4xx other than 408/429); `Retry` excludes `ProviderRequestRejected`.
+**Human review / corrections:** The human changed two of the AI's proposals:
+- **4xx gets its own exception, `ProviderRequestRejected`,** instead of reusing `ProviderContractViolation`, because the two differ for the breaker. A broken body means the provider is unhealthy (recorded); a rejected request means our request was wrong (ignored).
+- **Pseudo-currencies are unmappable** (the AI had only proposed using the currency's minor units).
+
+Regression checks, each fix removed temporarily and then restored:
+- without the breaker ignore, the three 400 ITs failed (`expected: 2`, `but was: 3`);
+- without the retry exclusion, they failed (`received 2` requests);
+- without blank-line skipping, the malformed-entries test failed;
+- with the scale hard-coded to 2, the JPY and XXX tests failed.
+
+Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 51 infrastructure unit tests, 35 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Contract change:** wording only (the example and the empty-result line); the mock already sent `#END`, so its code and the exported fixtures are unaffected.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/{ProviderRequestRejected,ProviderRestClients,ProviderResilience}.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/{alpha/AlphaClient,alpha/AlphaProviderAdapter,beta/BetaClient,beta/BetaProviderAdapter,gamma/GammaClient,gamma/GammaProviderAdapter,gamma/GammaStreamReader,gamma/GammaOfferMapper}.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/{ProviderRestClientsTest,alpha/AlphaProviderAdapterIT,beta/BetaProviderAdapterIT,gamma/GammaProviderAdapterIT,gamma/GammaOfferMapperTest}.java`, `flight-aggregator/prompts/infrastructure/03-provider-adapter.md`, `mock-providers/docs/provider-contracts.md`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — D3 (Gamma) follow-up: lowercase currency codes
+
+**Intent:** Fix `domain-guardian`'s last MINOR finding on Gamma: the three adapters disagreed on a lowercase currency code.
+**Prompt (summary):** Human approved the reviewer's suggestion: normalise the code before the minor-units lookup, as `Price.of` does, and add a test with `"eur"`.
+**Generated:** `GammaOfferMapper.toOffer` strips and uppercases (`Locale.ROOT`) the currency once, and uses that value both for `minorUnitDigits` and for `Price.of`. New test `should_accept_lowercase_currency_code_like_alpha_and_beta_do`.
+**Human review / corrections:** The defect came from the previous follow-up: `minorUnitDigits` looked up the raw field before `Price.of` had normalised it, so `eur` was unmappable for Gamma but a valid EUR Offer for Alpha and Beta. With the normalisation removed temporarily, the new test failed; it was then restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 52 infrastructure unit tests, 35 ITs); `/check-arch` commands pass (ArchUnit 10/10). This closes D3 for all three providers. Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/gamma/GammaOfferMapper.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/gamma/GammaOfferMapperTest.java`.

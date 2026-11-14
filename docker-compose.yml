@@ -34,7 +34,7 @@ services:
     # Healthcheck: inherited from mock-providers/Dockerfile.
     restart: unless-stopped
     ports:
-      - "8081:8081"
+      - "${MOCK_PROVIDERS_PORT:-8081}:8081"
     environment:
       MOCK_SEED: ${MOCK_SEED:-42}
       MOCK_INVENTORY_SIZE: ${MOCK_INVENTORY_SIZE:-500}
@@ -49,7 +49,7 @@ services:
     build: ./flight-aggregator
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${AGGREGATOR_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,6 +82,17 @@ services:
       LOCK_TTL: ${LOCK_TTL:-30s}
       WARM_ROUTES: ${WARM_ROUTES:-MAD-JFK,MAD-LHR,BCN-JFK}
       WARM_INTERVAL: ${WARM_INTERVAL:-PT10M}
+
+  frontend:
+    build: ./frontend
+    # Healthcheck: inherited from frontend/Dockerfile (/healthz).
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      # nginx resolves the flight-aggregator upstream once at startup and exits if it cannot.
+      flight-aggregator:
+        condition: service_healthy
 
 volumes:
   postgres-data:

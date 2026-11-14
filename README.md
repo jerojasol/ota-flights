@@ -10,7 +10,7 @@ The system ingests flight itineraries from three external GDS providers with dif
 |---|---|
 | [`flight-aggregator/`](flight-aggregator/) | Core microservice. Java 21, Spring Boot 4, hexagonal architecture (domain / application / infrastructure). PostgreSQL + Redis. |
 | [`mock-providers/`](mock-providers/) | Simulated GDS providers (Alpha, Beta, Gamma) with artificial latency and random failures. Spring Boot MVC. |
-| `frontend/` | Search dashboard. *(pending)* |
+| `frontend/` | Search dashboard (React + Vite + TypeScript). See `frontend/AGENTS.md`. |
 | `docs/` | `SOLUTION.md` and AI usage log. *(pending)* |
 
 ## Running

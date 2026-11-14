@@ -677,3 +677,75 @@ Verified: `EndToEndIT` passed 3 runs in a row, about 10 s each; `./mvnw verify` 
 
 Verification after the corrections: `./mvnw verify` passed (406 tests including 49 ITs, 0 failures). Then `docker compose down -v && docker compose up --build -d` and a 5-minute wait. Aggregator log outcomes: **OK 20, TIMEOUT 1, ERROR 0, CIRCUIT_OPEN 0**. This covered the single warm-routes run at startup (3 routes × 2 dates; the interval is 10 min) plus the smoke search. The one TIMEOUT was BETA on MAD-LHR 2026-11-15, logged with `elapsed_ms=600`. Smoke test: all PASS. A route never requested before (LIS-FCO, 2026-12-03) returned HTTP 200 in 5.9 s, with 5 items, `FRESH` and all three providers OK. Not committed.
 **Artifacts:** `docker-compose.yml`, `.env.example`, `scripts/smoke.sh`, `AGENTS.md`, `flight-aggregator/.dockerignore`, `mock-providers/.dockerignore`, `flight-aggregator/infrastructure/src/main/resources/application.yaml`, `docs/SOLUTION.md`, `docs/ai-log.md`.
+
+## 2026-11-14 — G1: frontend scaffold, AGENTS.md and typed API client
+
+**Intent:** Scaffold `frontend/` (Vite + React + TS strict) with a typed, same-origin API client and formatting helpers.
+**Prompt (summary):** `frontend/prompts/01-scaffold-and-api-client.md`: fixed dependency allow-list at current npm versions, `engines.node >=24 <25`, Vite proxy for `/api` (no CORS, no runtime base URL), types mirroring the backend DTOs, `ApiError` with Problem Details, `formatDuration`/`formatPrice`/`formatUtc` (UTC only), QueryClient with `retry: false`, project `AGENTS.md`, tests with stubbed `fetch`.
+**Generated:**
+- Scaffold: the template was generated in a temp dir with `npm create vite` (`.gitignore`, `index.html`, `tsconfig.json`, favicon copied over); everything else was written by hand. DTO types were checked against the Java records and against a live `/api/itineraries` response. `POST /api/admin/aggregations` was taken from `AggregationController`.
+- `src/api/{types,client}.ts`: query built with `URLSearchParams`, skipping undefined and empty values. Network failures and non-problem error bodies become `ApiError` with `problem: null`. `AbortError` is rethrown so React Query cancellation still works. No client timeout.
+- `src/format.ts`, `src/main.tsx`, `src/App.tsx` (placeholder), `src/styles.css`, `frontend/AGENTS.md`.
+- Tests: 5 for the client (including a non-JSON 502) and 6 for formatting.
+**Human review / corrections:** Two conflicts with the prompt came up, and the human chose how to resolve them:
+1. The current Vite react-ts template ships **oxlint**, not ESLint. The human kept ESLint with the classic Vite `eslint.config.js` (`@eslint/js`, `typescript-eslint`, react-hooks, react-refresh, `globals`).
+2. The latest **TypeScript is 7.0.2**, but `typescript-eslint` 8.72.2 only supports `<6.1`. The human chose `typescript ~6.0.3`; the pin and the reason are recorded in `frontend/AGENTS.md`.
+
+Other notes: `@testing-library/dom` (a peer of `@testing-library/react`) and `@types/node` `^24` were added as implied dependencies. `npm audit` reports 7 moderate advisories, all in the dev-only `typescript-eslint` chain, and they were left as is. Verified: `node -v` = v24.22.3; `npm ci`, lint, 11 tests and build all passed. Through the Vite proxy, `/api/itineraries?...&limit=1` returned `"FRESH"`, and an invalid origin returned `application/problem+json`. Not committed.
+**Artifacts:** `frontend/` (package.json, package-lock.json, vite.config.ts, eslint.config.js, tsconfig*.json, index.html, src/**, AGENTS.md), `README.md`, `docs/ai-log.md`.
+
+## 2026-11-14 — G2: search form, results list and keyset "load more"
+
+**Intent:** Build the one-page search UI: URL-driven search state, form, results with cursor pagination, and every loading and error state.
+**Prompt (summary):** `frontend/prompts/02-search-and-results.md`: `searchState.ts` (URLSearchParams, `pushState`, `popstate`, shareable links); `SearchForm` with client validation that mirrors the backend; `useItinerarySearch` built on `useInfiniteQuery` (key `["itineraries", params]`, `limit: 20`, metadata from the first page); `ResultsList`/`ItineraryCard`; idle, first-load, empty, 400, other-error and load-more-error states; no stale overwrite; 8 required tests.
+**Generated:**
+- `src/searchState.ts`, `src/useItinerarySearch.ts`, `src/components/{SearchForm,ResultsList,ItineraryCard}.tsx`, the rewritten `src/App.tsx`, and styles. Client validation regexes were copied from `ItinerarySearchRequest.java` (`[A-Za-z]{3}`, `[A-Za-z0-9]{2}`, `@Positive`), plus a client-only check that origin ≠ destination.
+- On `popstate`, the form is remounted with a new `key` so it refills from the URL. Problem `errors` keys that match a form field go to that field; other keys, or a 400 with no `errors`, go to a summary above the form. The "Load more" button becomes "Retry" after a load-more error, and the items already shown stay.
+- `src/App.test.tsx` has 11 tests: the 8 required ones, plus the idle hint, load-more error with retry, and a correlation id. The race test holds the first (MAD-JFK) response open, switches to BCN-LHR with back/forward navigation, then releases the old response.
+**Human review / corrections:** Accepted. Notes:
+1. The first test run failed 8 tests because Testing Library's automatic cleanup only registers with Vitest globals, which are off. I added `cleanup()` in `src/test/setup.ts`.
+2. Mutation check: with `params` temporarily removed from the query key, the race test failed. Restored.
+3. The race test switches searches with `popstate` instead of a second form submit, because the Search button is disabled while the first page is loading (as the prompt requires).
+4. The live acceptance check used `curl` through the Vite proxy with the same requests the UI sends, because no browser was available in the session. It was not a click-through in a browser and not React Query devtools. MAD→JFK 2026-11-20: page 1 had 20 items (`FRESH`); the cursor page had 20 more; 40 unique ids, non-decreasing prices. `maxPrice=1`: 0 items, `nextCursor: null`, which the UI shows as the empty state with the filters ("No itineraries found", "MAD → JFK, 2026-11-20, max €1").
+
+Verified: lint clean, 22 tests passed, build OK. Not committed.
+**Artifacts:** `frontend/src/App.tsx`, `frontend/src/App.test.tsx`, `frontend/src/searchState.ts`, `frontend/src/useItinerarySearch.ts`, `frontend/src/components/`, `frontend/src/styles.css`, `frontend/src/test/setup.ts`, `docs/ai-log.md`.
+
+## 2026-11-14 — G3: freshness badge, provider panel and live refresh
+
+**Intent:** Make the dashboard show how fresh the data is, report each provider's outcome, and follow background refreshes live with capped polling and a manual refresh.
+**Prompt (summary):** `frontend/prompts/03-freshness-and-providers.md`: `FreshnessBadge` (text per state, relative age every 30 s, UTC `title`); `ProviderPanel` (always ALPHA/BETA/GAMMA, fixed wording for statuses and for the partial and none-answered sentences); `useFreshnessPolling` (every 2 s, `limit: 1`, key `["freshness", params]`, stops on FRESH, on a search change, while the tab is hidden, or after 15 attempts); on FRESH, refetch silently with one page loaded or show a "Reload" bar with more; "Refresh now" with 409 treated as busy plus polling; two-column layout that stacks on narrow screens; 8 required tests with fake timers.
+**Generated:**
+- `src/useFreshnessPolling.ts`: polling driven by `setTimeout` and `queryClient.fetchQuery` on `["freshness", params]`, not React Query's `refetchInterval`, so the first poll happens 2 s after the first page and not immediately. A failed poll still counts toward the cap. Tab visibility comes from `useSyncExternalStore` on `visibilitychange`. The fresh callback uses `useEffectEvent`, so loading more pages does not restart the 2 s timer.
+- `src/components/SearchResults.tsx` is mounted with `key` = the serialised search. A new search therefore drops all polling and refresh state, and the cleanup clears the timer and cancels the in-flight poll. "Refresh now" uses `useMutation`. "Reload" trims the infinite query to page 1 with `setQueryData` and refetches, so there is no loading flash. Results now stay rendered whenever data exists (`pageCount > 0`). This matters because in TanStack v5 a failed load-more sets `status: 'error'`.
+- `src/components/{FreshnessBadge,ProviderPanel}.tsx`, the badge slot in `ResultsList`, and the layout and status styles. Every status has a text label plus a marker character, so colour is never the only signal.
+- `src/freshness.test.tsx` has 11 tests: the 8 required ones, plus "none answered", a 409 → busy message → polling, and another failure shown inline with the list kept.
+**Human review / corrections:** Accepted. Notes:
+1. ESLint's react-refresh rule rejected an exported helper from a component file. The helper was made private.
+2. Mutation checks: with `MAX_POLLS` at 16, the 15-poll test failed; with the "only one page loaded" rule removed, the Reload test failed. Both were restored.
+3. Live acceptance used `curl` through the Vite proxy with the UI's own requests, because there was no browser in the session. Observations:
+   - **Step 1:** LIS→BOS arrived `FRESH` with all three providers OK, but the timing line was lost to `jq`. A repeat on OPO→YUL took **4.2 s** cold and arrived `FRESH`.
+   - **Step 2:** with errorRate 0.7, four "Refresh now" calls returned all OK; TIMEOUT/ERROR/TIMEOUT (none answered); OK/ERROR/TIMEOUT (partial, 1 of 3); TIMEOUT/CIRCUIT_OPEN/CIRCUIT_OPEN. The search still returned 20 stored items each time. Which provider failed was random, because chaos is global in the mock.
+   - **Step 3:** with Redis stopped, every first page was `STALE` with `providers: {}` (HTTP 200, 20 items), and `POST` returned **409**. The UI shows this as three "no data" rows, no summary sentence, and "May be out of date" after 15 polls (30 s).
+   - **Step 4:** Redis restarted and chaos reset to 0.1.
+   - The circuit breakers opened during step 2 were still open on the next new route (OPO→YUL: BETA and GAMMA `CIRCUIT_OPEN`).
+   - "No console errors" was **not** checked, because there was no browser.
+
+Verified: lint clean, 33 tests passed, build OK. Not committed.
+**Artifacts:** `frontend/src/useFreshnessPolling.ts`, `frontend/src/components/{FreshnessBadge,ProviderPanel,SearchResults,ResultsList}.tsx`, `frontend/src/App.tsx`, `frontend/src/useItinerarySearch.ts`, `frontend/src/styles.css`, `frontend/src/freshness.test.tsx`, `docs/ai-log.md`.
+
+## 2026-11-14 — G4: frontend container (multi-stage build and nginx)
+
+**Intent:** Package the frontend as a container that serves the built bundle and proxies `/api` to the aggregator inside the compose network.
+**Prompt (summary):** `frontend/prompts/04-docker-nginx.md`: a `node:24-alpine` build stage with lockfile-first `npm ci` (no tests in the image) and a `nginx:stable-alpine` run stage; `nginx.conf` with `/healthz`, `/api/` proxied to `flight-aggregator:8080` with a 60 s read timeout, hashed `/assets/` cached for a year, `index.html` with `no-cache`, and gzip; `.dockerignore`.
+**Generated:**
+- `frontend/Dockerfile`, `frontend/nginx.conf` (with a comment on why there is no resolver: compose starts this service after the aggregator is healthy), `frontend/.dockerignore` (the list from the prompt, as written).
+- Verification: `docker build` runs; `nginx -t` fails outside compose with `host not found in upstream "flight-aggregator"`, as the prompt predicted. With `--add-host flight-aggregator:127.0.0.1`, `nginx -t` passes, `/healthz` returns `ok`, `/` returns `Cache-Control: no-cache`, gzip is applied, and a deep route serves the SPA shell.
+**Human review / corrections:** Accepted with two changes from the human:
+1. **Healthcheck host.** The URL changed from `http://localhost/healthz` to `http://127.0.0.1/healthz`. On Alpine, `localhost` can resolve to `::1` first, and nginx listens on IPv4 only. My first verification only saw the status `starting` at 2 s and never waited for a final status, so it would not have caught this. After the change, a container with the stub upstream reached **`healthy`**, and every health log entry had exit code 0. For the record, in this image `localhost` still worked: `/etc/hosts` lists `127.0.0.1` before `::1` and `wget localhost` exited 0. The IP form removes the dependency on resolution order.
+2. **One `Cache-Control` header on `/assets/`.** `expires 1y` was dropped. The location now sends only `Cache-Control: public, max-age=31536000, immutable`, which was verified on a hashed JS asset: one header and no `Expires`. I had noticed the duplicate headers in the first version but left them because the prompt asked for both.
+
+Other notes: the image is **62.3 MB**. The first build took 66 s (cold cache), and a second build with no changes took **1.7 s**, all layers cached. Not checked here: the proxy path (`/api/` → aggregator), which needs compose and is the F2 check.
+
+Not committed.
+**Artifacts:** `frontend/Dockerfile`, `frontend/nginx.conf`, `frontend/.dockerignore`, `docs/ai-log.md`.

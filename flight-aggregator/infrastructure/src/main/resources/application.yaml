@@ -50,3 +50,4 @@ aggregation:
   markup-percentage: ${MARKUP_PERCENTAGE:5}
   freshness-ttl: ${FRESHNESS_TTL:10m}
   lock-ttl: ${LOCK_TTL:30s}
+  reference-currency: ${REFERENCE_CURRENCY:EUR}

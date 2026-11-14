@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class InMemoryItineraryRepository implements ItineraryRepositoryPort {
 
@@ -23,9 +24,11 @@ public final class InMemoryItineraryRepository implements ItineraryRepositoryPor
             .thenComparing(itinerary -> itinerary.key().value());
 
     private final Map<ItineraryKey, Itinerary> rows = new ConcurrentHashMap<>();
+    private final AtomicInteger findByCalls = new AtomicInteger();
+    private volatile int lastLimit;
 
     @Override
-    public int upsertAll(Collection<Itinerary> itineraries) {
+    public synchronized int upsertAll(Collection<Itinerary> itineraries) {
         int written = 0;
         for (Itinerary itinerary : itineraries) {
             Itinerary stored = rows.get(itinerary.key());
@@ -40,6 +43,8 @@ public final class InMemoryItineraryRepository implements ItineraryRepositoryPor
     @Override
     public ItineraryPage findBy(SearchCriteria criteria, ItineraryFilter filter, Optional<PageCursor> cursor,
                                 int limit) {
+        findByCalls.incrementAndGet();
+        lastLimit = limit;
         List<Itinerary> matching = rows.values().stream()
                 .filter(itinerary -> matches(itinerary, criteria, filter))
                 .sorted(BY_FINAL_PRICE_THEN_KEY)
@@ -57,8 +62,12 @@ public final class InMemoryItineraryRepository implements ItineraryRepositoryPor
         return List.copyOf(rows.values());
     }
 
-    public Optional<Itinerary> find(ItineraryKey key) {
-        return Optional.ofNullable(rows.get(key));
+    public int findByCalls() {
+        return findByCalls.get();
+    }
+
+    public int lastLimit() {
+        return lastLimit;
     }
 
     private static boolean matches(Itinerary itinerary, SearchCriteria criteria, ItineraryFilter filter) {

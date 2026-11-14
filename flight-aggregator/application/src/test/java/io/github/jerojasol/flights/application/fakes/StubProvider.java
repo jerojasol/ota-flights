@@ -7,7 +7,6 @@ import io.github.jerojasol.flights.domain.port.out.FlightProviderPort;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public final class StubProvider implements FlightProviderPort {
 
@@ -15,7 +14,6 @@ public final class StubProvider implements FlightProviderPort {
     private final List<Offer> offers;
     private final Throwable failure;
     private final Duration delay;
-    private final AtomicInteger calls = new AtomicInteger();
 
     private StubProvider(Provider provider, List<Offer> offers, Throwable failure, Duration delay) {
         this.provider = provider;
@@ -40,10 +38,6 @@ public final class StubProvider implements FlightProviderPort {
         return new StubProvider(provider, offers, failure, delay);
     }
 
-    public int calls() {
-        return calls.get();
-    }
-
     @Override
     public Provider provider() {
         return provider;
@@ -51,7 +45,6 @@ public final class StubProvider implements FlightProviderPort {
 
     @Override
     public List<Offer> fetch(SearchCriteria criteria) {
-        calls.incrementAndGet();
         if (!delay.isZero()) {
             try {
                 Thread.sleep(delay);

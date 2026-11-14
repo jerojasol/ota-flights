@@ -224,3 +224,79 @@ Entry format:
 
 The existing tests did not catch either problem: they recorded the order of freshness calls but not where the repository read fell relative to them, and nothing simulated `markFresh` failing. Both new tests failed against the faulty code ("lock held during repository read") before the fix, and pass after it. Verified: 215 domain + 35 application tests and ArchUnit 10/10 pass. Lesson: when a refactor has to keep behaviour the same, first check that tests cover each path being moved (here the exception path, and the order of side effects around `finally`). Not committed.
 **Artifacts:** `flight-aggregator/application/src/main/java/io/github/jerojasol/flights/application/SearchItinerariesService.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/SearchItinerariesServiceTest.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/fakes/InMemoryItineraryRepository.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/fakes/InMemoryFreshness.java`.
+
+## 2026-11-14 — D2: Persistence (Flyway schema, JPA read side, JDBC upsert, keyset pagination)
+
+**Intent:** Implement `ItineraryRepositoryPort` on PostgreSQL: one row per Itinerary Key, cheapest wins, and keyset pagination whose cost does not grow with page depth.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/02-persistence.md`: Flyway `V1__create_itineraries.sql` with commented indexes; package-private `ItineraryJpaEntity` (read side); `ItineraryJpaRepository` with one native keyset `@Query` fetching `limit + 1`; `ItineraryJdbcUpserter` (`batchUpdate`, chunks of 1,000, `ON CONFLICT … WHERE EXCLUDED.final_price < itineraries.final_price`); `ItineraryPersistenceMapper` with a private `SegmentJson` record and Jackson 3; `ItineraryRepositoryAdapter`; `PersistenceConfiguration`; `ItineraryRepositoryAdapterIT` (Testcontainers PostgreSQL 16) and a `@Tag("perf")` `KeysetPaginationPerfIT` on 1M rows.
+**Generated:**
+- `V1__create_itineraries.sql`; every index has a comment saying why it exists (for `SOLUTION.md`).
+- `persistence/`: `ItineraryJpaEntity`, `ItineraryJpaRepository`, `ItineraryJdbcUpserter`, `ItineraryPersistenceMapper` (with an `ItineraryRow` record for the write side), `ItineraryRepositoryAdapter`, `PersistenceConfiguration`. Everything is package-private except `PersistenceConfiguration`; only `ItineraryRepositoryPort` leaves the package.
+- `FlightAggregatorApplication`: the `@SpringBootApplication` class the slice tests need. It also makes `spring-boot:repackage` work, so `./mvnw verify` no longer needs `-Dspring-boot.repackage.skip` (open since D1).
+- Tests: `ItineraryRepositoryAdapterIT` (9) and `KeysetPaginationPerfIT` (1, perf only).
+**Decisions:**
+- **Keyset on `(final_price, itinerary_key)`, not `(final_price, id)` as the prompt said.** The domain's `PageCursor` is `(lastFinalPrice, lastKey)`, `domain-model.md` §8 defines page order as (final price, key), and AGENTS.md §4 forbids database ids in the domain. `ix_itineraries_search` therefore ends in `itinerary_key`. The key is unique, so it is as good a tie-break as `id`, and the in-memory test repository in `application` already used the same order.
+- **Carrier filter uses `carriers @> ARRAY[:carrier]`, not `:carrier = ANY(carriers)`.** Both give the same results, but only `@>` can use the GIN index. With `= ANY`, the index comment would have been false.
+- Null optional filters are passed as `CAST(:p AS type) IS NULL` so Postgres can type a null parameter.
+- The entity maps only the columns needed to rebuild an Itinerary. `CHAR(n)` columns use `@JdbcTypeCode(SqlTypes.CHAR)` and `segments` uses `@JdbcTypeCode(SqlTypes.JSON)` on a `String`.
+- Segment JSON stores instants as ISO strings, so the stored format never depends on mapper settings.
+- `ItineraryFilter.origin/destination` that contradict the criteria return an empty page without a query; matching ones are no-ops.
+- `PersistenceConfiguration` lives in `persistence/`, not `config/`, because the types it wires are package-private.
+- The IT runs with `@Transactional(NOT_SUPPORTED)` and truncates the table before each test. With a shared rolled-back test transaction, Hibernate could serve cached entities after a JDBC upsert and hide what the database actually holds.
+**Human review / corrections:** None yet.
+- The `(final_price, itinerary_key)` deviation is reported for human confirmation.
+- Verified: 215 domain + 35 application tests, ArchUnit 10/10, and 9/9 ITs pass under `./mvnw -pl infrastructure -am verify`. `-Pperf` runs only the perf test.
+- Perf on 1,000,000 rows of one route and date, page of 20 at depth 900,000, Postgres 16 in Testcontainers on a laptop: keyset **0.145 ms** using `ix_itineraries_search`, `OFFSET 900000` **444.136 ms**. These numbers are for `SOLUTION.md` §4.3.
+- `ddl-auto=validate` was shown to be active: renaming a mapped column made all 9 ITs fail with `Schema validation: missing column [source_x]`, and the column was then restored.
+- **AI tooling defect found:** `/test-layer` has the same missing `-am` as `/check-arch` had. Its `application`, `infrastructure` and `it` mappings fail before running any test (checked: `-pl infrastructure verify` and `-pl application test` both exit 1). Not fixed yet; proposed to the human.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/resources/db/migration/V1__create_itineraries.sql`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/FlightAggregatorApplication.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/persistence/**`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/persistence/**`, `flight-aggregator/prompts/infrastructure/02-persistence.md`.
+
+## 2026-11-14 — D2 follow-up: keyset query plan, currency in price filters, update counts
+
+**Intent:** Fix two `domain-guardian` findings and a query-plan problem in the persistence adapter before committing D2.
+**Prompt (summary):** Human asked for three fixes:
+1. Split the keyset query into a first-page query and a later-pages query with a plain row comparison, because `(:cursorPrice IS NULL OR (final_price, itinerary_key) > …)` cannot be an index condition under a generic plan. The human measured 9,256 vs 55 buffers for a page 90% deep on 1M rows. Add an IT that forces a generic plan and asserts the row comparison is in `Index Cond`, not `Filter`.
+2. Currency option (a): filter by the currency of `maxPrice` and of the cursor price, and return an empty page when the two differ. Add an IT for a `maxPrice` in another currency.
+3. Throw on a negative JDBC update count instead of counting 0, with a unit test on a stubbed `JdbcTemplate` (no `reWriteBatchedInserts` IT).
+
+Also: correct the D2 prompt so the cursor is `(final_price, itinerary_key)`.
+**Generated:**
+- `ItineraryJpaRepository` now has `FIRST_PAGE` and `NEXT_PAGE` as public constants on the interface, so the plan test EXPLAINs the exact SQL that runs, with `findFirstPage` / `findNextPage` using them. A `currency` filter is added, and route parameters are cast to `char(3)`.
+- `ItineraryRepositoryAdapter` resolves the currency from `maxPrice` or the cursor; a mismatch returns `ItineraryPage.empty()` without querying.
+- `ItineraryJdbcUpserter` throws `IllegalStateException` on a negative count.
+- Tests:
+  - `ItineraryJdbcUpserterTest` (2 unit tests).
+  - 3 new `ItineraryRepositoryAdapterIT` cases: `maxPrice` in USD, cursor in USD, mismatch.
+  - `KeysetQueryPlanIT`: 50k rows plus `ANALYZE`; one connection runs `SET plan_cache_mode = force_generic_plan`, then `PREPARE` from `NEXT_PAGE` with `:name` turned into `$n`, typed as pgjdbc binds them, then `EXPLAIN (FORMAT JSON) EXECUTE`; it walks the plan JSON.
+- `KeysetPaginationPerfIT` now uses the `NEXT_PAGE` predicates and binds the route as parameters.
+- D2 prompt: cursor and index are `(final_price, itinerary_key)`, with a note on why the cursor must not use `IS NULL OR`.
+**Human review / corrections:** The human found the generic-plan problem; the AI had written the cursor in the `IS NULL OR` form the prompt suggested, and its perf test did not catch it, because it ran `EXPLAIN ANALYZE` with literals, which get a custom plan.
+
+**A second, worse bug, which the new plan IT found on its first run:** `origin` and `destination` are `CHAR(3)`, and pgjdbc binds Java Strings as `varchar`. So `origin = :origin` became `(origin)::text = $1`, which casts the indexed column. Postgres could not use `ix_itineraries_search` at all, and the plan was a **Seq Scan + Sort for every search, first page included**. The original IT and the perf IT both missed it because they used literals (`'MAD'` is typed `char`) or only checked results. Fix: `CAST(:origin AS char(3))`, `CAST(:destination AS char(3))`.
+
+Verified:
+- With the old `IS NULL OR` cursor put back temporarily, `KeysetQueryPlanIT` fails (no `Index Cond` contains `ROW(final_price, itinerary_key) > ROW(`); it was then restored.
+- `./mvnw -pl infrastructure -am verify` passes: 215 domain, 35 application, 12 infrastructure unit tests (ArchUnit 10/10 + upserter 2), and 13 ITs (12 adapter + 1 plan).
+- Perf with the route bound as varchar parameters: keyset **0.209 ms** vs `OFFSET 900000` **550.967 ms**. These replace the D2 entry's 0.145 / 444.136 ms, which were measured with literals and so did not reflect real binding.
+
+Lesson: a plan assertion must use the same parameter types and plan mode as production; literals in EXPLAIN can hide both bugs. Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/persistence/ItineraryJpaRepository.java`, `…/persistence/ItineraryRepositoryAdapter.java`, `…/persistence/ItineraryJdbcUpserter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/persistence/ItineraryJdbcUpserterTest.java`, `…/persistence/ItineraryRepositoryAdapterIT.java`, `…/persistence/KeysetQueryPlanIT.java`, `…/persistence/KeysetPaginationPerfIT.java`, `flight-aggregator/prompts/infrastructure/02-persistence.md`.
+
+## 2026-11-14 — D2 follow-up: upsert must not compare prices across currencies
+
+**Intent:** Fix the MAJOR P4 finding from `domain-guardian`'s third D2 review: the upsert compared prices across currencies.
+**Prompt (summary):** Human approved the AI's recommendation: add a currency-equality condition to the upsert's conflict update, add the reviewer's IT, and record the remaining mixed-currency ordering gap in `SOLUTION.md` instead of fixing it now.
+**Generated:**
+- `ItineraryJdbcUpserter`: `AND EXCLUDED.currency = itineraries.currency` in the `ON CONFLICT … DO UPDATE WHERE`, and the class Javadoc now explains it. A conflict in another currency writes nothing and counts 0.
+- `ItineraryRepositoryAdapterIT.should_leave_row_untouched_when_same_key_arrives_cheaper_in_another_currency`: stores EUR 100, upserts the same key at USD 50, and asserts count 0, base price still EUR 100, final price and source unchanged.
+- `docs/SOLUTION.md` §6: under the single-currency bullet, how currency is handled and the known gap (an unfiltered first page orders mixed-currency rows by raw amount if the reference currency ever changes).
+**Human review / corrections:** The defect was in the AI's original D2 upsert. Before the fix, a cheaper USD offer overwrote a EUR row and kept `currency = 'EUR'`, re-labelling the price. The reviewer missed it in its first D2 review and caught it on the second, which is why reviewing again after each fix was worth it. The human chose skipping the update over throwing, so one row in another currency cannot fail a whole aggregation. Verified: with the new condition removed temporarily, the new IT fails (`expected: 0 but was: 1`); it was then restored. `./mvnw -pl infrastructure -am verify` passes: 215 domain, 35 application, 12 infrastructure unit, 14 ITs. `/check-arch` passes (ArchUnit 10/10; domain/application unchanged). Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/persistence/ItineraryJdbcUpserter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/persistence/ItineraryRepositoryAdapterIT.java`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — `/test-layer` missing `-am` (AI tooling failure, corrected)
+
+**Intent:** Make every `/test-layer` option run its tests.
+**Prompt (summary):** Human approved adding `-am`, as was done for `/check-arch`.
+**Generated:** In `flight-aggregator/.opencode/commands/test-layer.md`, the `application`, `infrastructure` and `it` mappings now use `-pl <module> -am`. `domain` and `all` are unchanged; they already worked.
+**Human review / corrections:** **AI tooling failure, the same as `/check-arch`.** The command was written without `-am`, so any module that depends on another (`application`, `infrastructure`) could not resolve the uninstalled parent POM, and Maven failed before running any test. Found during D2. Verified each mapping by exit code: `-pl domain test` 0; `-pl application test` 1 before, `-pl application -am test` 0 after; `-pl infrastructure -am test` 0; `-pl infrastructure -am verify` 0; `verify` 0. Side effect: `-am` also runs the tests of upstream modules, so the `application` and `infrastructure` layers report domain (and application) counts too. A first check loop reported every command as failing; that was the AI's shell script (zsh does not word-split `$c`), not Maven, and was rerun with `${=c}`.
+**Artifacts:** `flight-aggregator/.opencode/commands/test-layer.md`.

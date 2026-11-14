@@ -64,6 +64,8 @@ _Per layer: pure unit tests in `domain`; fixture-driven mapper tests; WireMock f
 ## 6. Limitations and trade-offs
 
 - _Single currency per search; no FX._
+  - Prices are never compared across currencies. A max-price filter or page cursor only matches rows in its own currency, and an upsert conflict in another currency writes nothing.
+  - Known gap: if the reference currency changed between aggregations, new keys could be stored in a second currency on the same route. An unfiltered first page orders by raw amount, so the two currencies would be interleaved. Fixing it needs either one currency enforced per route or FX conversion.
 - _Exact-key deduplication only; no fuzzy matching._
 - _On-demand synchronous aggregation on cold miss (bounded); no event pipeline._
 - _No authentication._

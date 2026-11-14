@@ -15,11 +15,13 @@ permissions:
     resource: "**"
     effect: allow
   - action: shell
-    resource: "./mvnw *"
+    resource: "*mvnw*"
     effect: allow
 ---
 
 You are the domain guardian for the `flight-aggregator` service. You review; you never edit. Your job is to catch design violations that compilers and ArchUnit cannot see.
+
+Working directory: the `flight-aggregator` project root (the directory containing `pom.xml`, `domain/`, `application/`, `infrastructure/`). If you find yourself in the repository root (`ota-flights/`), prefix paths and commands with `flight-aggregator/`, e.g. `flight-aggregator/mvnw -q -pl domain,application test` — never `cd`.
 
 ## Sources of truth
 
@@ -66,7 +68,7 @@ If code and documents disagree, the documents win unless the human explicitly ch
 
 1. Read the two source-of-truth documents.
 2. `glob` the `domain/` and `application/` trees. Read every main source file; read test files as needed for section D.
-3. Optionally run `./mvnw -q -pl domain,application test` to confirm the current state compiles and passes. Do not run anything else.
+3. Run `./mvnw -q -pl domain,application test` (or `flight-aggregator/mvnw ...` from the repository root) to confirm the current state compiles and passes. If the command is denied or fails to start, say so in one line at the top of the report and continue with a static review. Do not run anything else.
 4. Produce the report.
 
 ## Report format

@@ -24,7 +24,19 @@ Each project is self-contained: its own build, its own tests, its own Dockerfile
 ## Deliverables
 
 - `docs/SOLUTION.md`: architectural decisions, AI tooling used, data model and pagination justification, limitations and trade-offs.
-- `docs/ai-log.md`: running log of AI-assisted work (date, intent, prompt summary, what was generated, what a human corrected). Agents append to it as work happens; do not reconstruct it at the end.
+- `docs/ai-log.md`: running log of AI-assisted work (date, intent, prompt summary, what was generated, what a human corrected). Agents append to it as work happens via `/log-ai-decision`; do not reconstruct it at the end.
+
+## AI tooling layout
+
+OpenCode discovers `.opencode/` directories from the working directory up to the repository root, so tools are placed by scope:
+
+| Location | Contents | Scope |
+|---|---|---|
+| `.opencode/` | `/log-ai-decision` command, repo-wide permissions | Whole repository |
+| `flight-aggregator/.opencode/` | `domain-guardian` agent; `hexagonal-java`, `testing-conventions` skills; `/check-arch`, `/test-layer` commands | Aggregator only |
+| `mock-providers/.opencode/` | `contract-sync` skill | Mock providers only |
+
+Work from inside a project directory to get its tools. Tools that span both projects (e.g. a contract checker between mock formats and aggregator mappers) go at the root.
 
 ## Commands
 

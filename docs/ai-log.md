@@ -677,3 +677,19 @@ Verified: `EndToEndIT` passed 3 runs in a row, about 10 s each; `./mvnw verify` 
 
 Verification after the corrections: `./mvnw verify` passed (406 tests including 49 ITs, 0 failures). Then `docker compose down -v && docker compose up --build -d` and a 5-minute wait. Aggregator log outcomes: **OK 20, TIMEOUT 1, ERROR 0, CIRCUIT_OPEN 0**. This covered the single warm-routes run at startup (3 routes × 2 dates; the interval is 10 min) plus the smoke search. The one TIMEOUT was BETA on MAD-LHR 2026-11-15, logged with `elapsed_ms=600`. Smoke test: all PASS. A route never requested before (LIS-FCO, 2026-12-03) returned HTTP 200 in 5.9 s, with 5 items, `FRESH` and all three providers OK. Not committed.
 **Artifacts:** `docker-compose.yml`, `.env.example`, `scripts/smoke.sh`, `AGENTS.md`, `flight-aggregator/.dockerignore`, `mock-providers/.dockerignore`, `flight-aggregator/infrastructure/src/main/resources/application.yaml`, `docs/SOLUTION.md`, `docs/ai-log.md`.
+
+## 2026-11-14 — G1: frontend scaffold, AGENTS.md and typed API client
+
+**Intent:** Scaffold `frontend/` (Vite + React + TS strict) with a typed, same-origin API client and formatting helpers.
+**Prompt (summary):** `frontend/prompts/01-scaffold-and-api-client.md`: fixed dependency allow-list at current npm versions, `engines.node >=24 <25`, Vite proxy for `/api` (no CORS, no runtime base URL), types mirroring the backend DTOs, `ApiError` with Problem Details, `formatDuration`/`formatPrice`/`formatUtc` (UTC only), QueryClient with `retry: false`, project `AGENTS.md`, tests with stubbed `fetch`.
+**Generated:**
+- Scaffold: the template was generated in a temp dir with `npm create vite` (`.gitignore`, `index.html`, `tsconfig.json`, favicon copied over); everything else was written by hand. DTO types were checked against the Java records and against a live `/api/itineraries` response. `POST /api/admin/aggregations` was taken from `AggregationController`.
+- `src/api/{types,client}.ts`: query built with `URLSearchParams`, skipping undefined and empty values. Network failures and non-problem error bodies become `ApiError` with `problem: null`. `AbortError` is rethrown so React Query cancellation still works. No client timeout.
+- `src/format.ts`, `src/main.tsx`, `src/App.tsx` (placeholder), `src/styles.css`, `frontend/AGENTS.md`.
+- Tests: 5 for the client (including a non-JSON 502) and 6 for formatting.
+**Human review / corrections:** Two conflicts with the prompt came up, and the human chose how to resolve them:
+1. The current Vite react-ts template ships **oxlint**, not ESLint. The human kept ESLint with the classic Vite `eslint.config.js` (`@eslint/js`, `typescript-eslint`, react-hooks, react-refresh, `globals`).
+2. The latest **TypeScript is 7.0.2**, but `typescript-eslint` 8.72.2 only supports `<6.1`. The human chose `typescript ~6.0.3`; the pin and the reason are recorded in `frontend/AGENTS.md`.
+
+Other notes: `@testing-library/dom` (a peer of `@testing-library/react`) and `@types/node` `^24` were added as implied dependencies. `npm audit` reports 7 moderate advisories, all in the dev-only `typescript-eslint` chain, and they were left as is. Verified: `node -v` = v24.22.3; `npm ci`, lint, 11 tests and build all passed. Through the Vite proxy, `/api/itineraries?...&limit=1` returned `"FRESH"`, and an invalid origin returned `application/problem+json`. Not committed.
+**Artifacts:** `frontend/` (package.json, package-lock.json, vite.config.ts, eslint.config.js, tsconfig*.json, index.html, src/**, AGENTS.md), `README.md`, `docs/ai-log.md`.

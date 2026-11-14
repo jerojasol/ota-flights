@@ -762,3 +762,37 @@ Not committed.
 Not verified in a real browser by the agent. Not committed.
 **Follow-up:** the user reported that it still did not work in the browser. Cause: the running container (`ota-frontend` on port 3000) was built before the fix and still served the old bundle (`index-DKEyiYq0.js`). The source change does not reach nginx until the image is rebuilt. The image was rebuilt (`index-BtkZWRBY.js`), the old container was removed, and a new one was started on `ota-flights_default` at port 3000. The container reports `starting` for a few seconds after start, then becomes healthy, and `/api` through nginx returns 200. Lesson for the workflow: after any frontend source change, rebuild the image before testing the container (`npm run dev` avoids this).
 **Artifacts:** `frontend/src/App.tsx`, `frontend/src/App.test.tsx`, `docs/ai-log.md`.
+
+## 2026-11-14 — F2: frontend in Compose, quick start, clean-clone verification
+
+**Intent:** Make `docker compose up --build` work for someone who has never seen this machine, including the dashboard.
+**Prompt (summary):** `prompts/compose/02-add-frontend-and-clean-run.md`. Steps: add a `frontend` service (healthcheck from its Dockerfile, depends on a healthy aggregator) and make the published ports configurable; extend `smoke.sh` with checks through the frontend; rewrite the README quick start; verify from a clean clone of the branch without committing.
+**Generated:**
+- `docker-compose.yml`: `frontend` service. Ports set by `AGGREGATOR_PORT`, `MOCK_PROVIDERS_PORT` and `FRONTEND_PORT`, also added to `.env.example`.
+- `scripts/smoke.sh`: optional third argument for the frontend URL. Checks `/healthz`, that `/` contains `id="root"`, and that a search through the nginx `/api` proxy returns items.
+- `README.md`: quick start (prerequisites, measured build time, URLs, first search, resilience demo, quiet run, reset, ports, tests). Removed the "(pending)" markers.
+- Clean clone: checked before the run. `mvnw` and the scripts are mode 100755 in git, both `maven-wrapper.properties` are tracked, `frontend/package-lock.json` is tracked and `npm ci` succeeded, and nothing the build needs is git-ignored (the root `.gitignore` does not ignore `prompts/`, contrary to the prompt). The only files missing from the clone were this step's own uncommitted ones: `docker-compose.yml`, `scripts/smoke.sh`, `.env.example`.
+- Results: `docker compose build --no-cache` took 120 s, with base images already pulled locally, so not a fully cold machine. `up --wait` until all five services were healthy took 33 s. Smoke test: all 8 checks PASS. Dashboard-equivalent requests through the proxy (20 per page, MAD-JFK 2026-12-10): page 1 had 20 items, FRESH, all providers OK, in 4.0 s; page 2 had 20 items with no repeated ids and prices continuing in order.
+**Human review / corrections:**
+- **Missing files in the clone.** As the prompt required, the AI stopped and asked. The human chose to copy the three uncommitted files into the clone, without committing.
+- **Port 3000 busy (found by the run).** It was held by a container `ota-frontend-local`, outside compose and apparently left from G4. The AI did not remove it; the clone and the working-tree stack ran with `FRONTEND_PORT=3001`.
+- **Shared volume (found by the run).** `down -v` in the clone also deleted the working tree's Postgres volume, because the compose file pins `name: ota-flights`, so every checkout shares one project and one volume.
+- **Resilience demo (AI error, caught before reporting).** The AI's first README draft said an already-searched route would show STALE data while providers fail. Checked against the live stack, that was wrong: within the 10-minute freshness TTL providers are not called at all. A failed refresh saves nothing, and the search response still shows the previous run's statuses (all OK) and FRESH. The README now describes what was observed. Whether a failed refresh should update the reported outcomes is flagged to the human; it was not changed.
+- The AI had no browser available, so the dashboard was checked with the same HTTP requests the UI makes, not visually.
+- Not committed.
+**Artifacts:** `docker-compose.yml`, `.env.example`, `scripts/smoke.sh`, `README.md`, `docs/ai-log.md`.
+
+## 2026-11-14 — F2 accepted: meaning of provider statuses after a failed refresh
+
+**Intent:** Settle the questions the F2 clean-clone run raised.
+**Prompt (summary):** F2 accepted. The human decided:
+1. Keep `name: ota-flights` in the compose file.
+2. Keep the current behaviour after a refresh in which every provider fails, but make it explicit: `providers` and `aggregatedAt` describe the last aggregation that produced the data shown, not the last attempt. This goes in the `@Schema` descriptions, in the dashboard (panel title, a message instead of silently reverting, and a test) and in `SOLUTION.md` §6.
+3. The README resilience block uses `errorRate` 0.5, so the usual outcome is a partial failure.
+**Generated:**
+- `ItineraryPageResponse`: new `@Schema` descriptions for `providers` and `aggregatedAt`, confirmed in `/v3/api-docs` on the running stack.
+- Frontend: the provider panel is titled "Last successful aggregation". When "Refresh now" returns with no provider OK, `SearchResults` shows "No provider answered; showing stored results." and leaves the panel, freshness badge and list unchanged: no refetch, no polling. New test in `freshness.test.tsx`. Mutation check: with the guard disabled, the new test failed; it was then restored.
+- `docs/SOLUTION.md` §6: a refresh in which every provider fails stores nothing and is not reflected in the search response. The failure is visible only in the refresh response and in the logs.
+- `README.md`: the resilience block uses `errorRate` 0.5. It describes partial failures as the usual outcome, and says a refresh in which all three fail leaves the stored results and statuses unchanged.
+**Human review / corrections:** All decisions are the human's. The human's note said to replace 0.7, but the README draft actually used 1.0; it was changed to 0.5 as decided. Verified: frontend has 35 tests passing, lint is clean and the build succeeds. `./mvnw verify` in `flight-aggregator` passed (406 tests including 49 ITs, 0 failures). Stack rebuilt (frontend on 3001, because 3000 is still held by `ota-frontend-local`); smoke test all PASS, and the served bundle contains both new strings. The dashboard was not checked visually (no browser available). Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/web/dto/ItineraryPageResponse.java`, `frontend/src/components/ProviderPanel.tsx`, `frontend/src/components/SearchResults.tsx`, `frontend/src/freshness.test.tsx`, `docs/SOLUTION.md`, `README.md`, `docs/ai-log.md`.

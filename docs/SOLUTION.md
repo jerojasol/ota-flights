@@ -64,12 +64,21 @@ _Per layer: pure unit tests in `domain`; fixture-driven mapper tests; WireMock f
 ## 6. Limitations and trade-offs
 
 - _Single currency per search; no FX._
+  - Prices are never compared across currencies. A max-price filter or page cursor only matches rows in its own currency, and an upsert conflict in another currency writes nothing.
+  - Known gap: if the reference currency changed between aggregations, new keys could be stored in a second currency on the same route. An unfiltered first page orders by raw amount, so the two currencies would be interleaved. Fixing it needs either one currency enforced per route or FX conversion.
+  - Amounts always have scale 2 (domain invariant P2). Gamma's `price_cents` is converted with the currency's own minor units, so EUR and JPY are exact, but a 3-decimal currency such as KWD (`1234` → `1.234`) is rounded HALF_EVEN to 2 decimals (`1.23`). Pseudo-currencies without minor units (XXX, XAU) are dropped as unmappable. Supporting 3-decimal currencies would need P2 to follow the currency's minor units.
 - _Exact-key deduplication only; no fuzzy matching._
+  - Beta sends local time plus an IANA zone, without an offset. During the autumn daylight-saving overlap a local time happens twice, and the adapter uses the earlier offset. A departure in the repeated hour may therefore be mapped one hour early, get a different Itinerary Key from the same flight sent by Alpha or Gamma (both UTC), and not deduplicate against them. Local times inside a spring-forward gap do not exist and are dropped as unmappable. Fixing it would need Beta to send an offset.
 - _On-demand synchronous aggregation on cold miss (bounded); no event pipeline._
-- _No authentication._
+  - A provider retry can start too late to finish inside the fan-out budget (defaults: 3 s provider timeout, 3.5 s budget). A 500 that arrives near the end of the first attempt starts a retry that the aggregation no longer waits for: the provider is reported as TIMEOUT rather than ERROR, the abandoned retry still calls it, and its offers arrive with the next refresh. Data stays correct; only the reported status is less precise. Accepted rather than tightening the defaults.
+- _Redis outage: fail closed, serve from Postgres, no refresh._ While Redis is unreachable nothing can take the aggregation lock, so nothing refreshes data: not searches, not the warm-routes scheduler, and not a manual refresh (`POST /api/admin/aggregations` answers 409 Conflict). Searches serve whatever Postgres holds, marked STALE; a route never aggregated before returns an empty page. This is deliberate: every path fails closed rather than keeping one that reaches providers without coordination, so provider traffic stays where it was. No refresh is possible until Redis is back. The container stays healthy throughout, because the healthcheck is `/actuator/health/liveness`; `/actuator/health` reports Redis DOWN for operators. Lock release is compare-and-delete, so an expired holder cannot release another holder's lock.
+- _No authentication._ This includes `POST /api/admin/aggregations` and the actuator endpoints; `/actuator/health` shows details (provider circuit breakers) to anyone.
 - _Frontend scope._
 - _Others as discovered._
 
 ## 7. What I would do next
 
 _Priority-ordered list._
+
+- **Budget-aware retry.** Let the retry decision see the time left in the fan-out budget, so a retry is only started when it can finish; the provider is then reported as ERROR, and no abandoned call keeps hitting it.
+- **Known technical debt: the aggregation-under-lock sequence is written three times.** tryLock → aggregate → markFresh if any provider succeeded → release appears in `SearchItinerariesService` (cold miss and background refresh) and in `RefreshItinerariesService`. The three differ in how they treat a failure (serve stale data, let the executor log it, report it to the caller), and the cold miss also keeps the outcomes when `markFresh` fails. Tests pin each path today; a shared helper that keeps those differences explicit would make a future rule change a single edit.

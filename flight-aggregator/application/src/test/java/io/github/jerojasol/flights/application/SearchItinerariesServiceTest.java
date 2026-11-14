@@ -232,6 +232,38 @@ class SearchItinerariesServiceTest {
     }
 
     @Test
+    void should_release_lock_before_reading_repository_when_synchronous_aggregation_throws() {
+        repository.upsertAll(List.of(STORED));
+        InMemoryFreshness freshness = new InMemoryFreshness(Freshness.MISSING).withLastResult(PREVIOUS);
+        repository.onFindBy(() -> assertThat(freshness.locked()).as("lock held during repository read").isFalse());
+        RecordingAggregator aggregator = RecordingAggregator.failing(new IllegalStateException("boom"));
+
+        SearchResult result = service(freshness, aggregator, executor).search(MAD_JFK, ItineraryFilter.none(), Optional.empty(), 20);
+
+        assertThat(result.freshness()).isEqualTo(Freshness.MISSING);
+        assertThat(result.page().items()).containsExactly(STORED);
+        assertThat(result.lastOutcomes()).isEqualTo(PREVIOUS.outcomes());
+        assertThat(repository.findByCalls()).isEqualTo(1);
+    }
+
+    @Test
+    void should_report_just_aggregated_outcomes_as_missing_when_mark_fresh_fails() {
+        InMemoryFreshness freshness = new InMemoryFreshness(Freshness.MISSING).withLastResult(PREVIOUS)
+                .failingMarkFreshWith(new IllegalStateException("store down"));
+        repository.onFindBy(() -> assertThat(freshness.locked()).as("lock held during repository read").isFalse());
+        RecordingAggregator aggregator = RecordingAggregator.returning(SUCCEEDED);
+
+        SearchResult result = service(freshness, aggregator, executor).search(MAD_JFK, ItineraryFilter.none(), Optional.empty(), 20);
+
+        assertThat(result.freshness()).isEqualTo(Freshness.MISSING);
+        assertThat(result.aggregatedAt()).contains(NOW);
+        assertThat(result.lastOutcomes()).isEqualTo(SUCCEEDED.outcomes());
+        assertThat(freshness.lastResultCalls()).isZero();
+        assertThat(freshness.calls()).containsExactly("status", "tryLock", "markFresh", "release");
+        assertThat(freshness.locked()).isFalse();
+    }
+
+    @Test
     void should_release_lock_when_background_refresh_throws() {
         InMemoryFreshness freshness = new InMemoryFreshness(Freshness.STALE);
         RecordingAggregator aggregator = RecordingAggregator.failing(new IllegalStateException("boom"));

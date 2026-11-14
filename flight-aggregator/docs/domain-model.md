@@ -78,6 +78,13 @@ Each invariant must be enforced in the constructor/factory of the owning type an
 ### Offer
 - O1. `basePrice.currency` equals the **reference currency** of the aggregation. The reference currency is a constructor argument of `OfferValidator` (infrastructure configures it; the domain never reads configuration). `Offer` itself accepts any currency: O1 is a pipeline rule, enforced by the validator, not by the `Offer` constructor.
 
+### ProviderResponse
+- R1. `offers` is non-null and defensively copied.
+- R2. `unmappable` is not negative.
+
+### ProviderOutcome
+- PO1. `status` is non-null, `offersReceived` and `offersRejected` are not negative, and `elapsed` is non-null and not negative.
+
 ### Itinerary
 - I1. Has at least one Segment.
 - I2. Has at most 4 Segments (3 connections).
@@ -167,7 +174,7 @@ Rejected offers are counted and reported per provider in the aggregation result;
 Which component raises which reason:
 - `OfferValidator` raises CURRENCY_MISMATCH, TOO_MANY_SEGMENTS, ORIGIN_EQUALS_DESTINATION, AIRPORT_MISMATCH_AT_CONNECTION, CONNECTION_OVERLAP, CONNECTION_TOO_SHORT, CONNECTION_TOO_LONG and TOTAL_DURATION_EXCEEDED.
 - NO_SEGMENTS is never raised by the validator, because `Offer` rejects empty lists; it only surfaces as `InvalidItineraryException` from `Itinerary.rehydrate`.
-- DEAD_LEG_SAME_AIRPORT, DEAD_LEG_NON_POSITIVE_DURATION and SEGMENT_DURATION_EXCEEDED are enforced by the `Segment` constructor, so an `Offer` can never hold such a segment. An adapter that fails to build a `Segment` reads `InvalidSegmentException.reason()` and counts the offer under that reason.
+- DEAD_LEG_SAME_AIRPORT, DEAD_LEG_NON_POSITIVE_DURATION and SEGMENT_DURATION_EXCEEDED are enforced by the `Segment` constructor, so an `Offer` can never hold such a segment. An adapter that fails to build a `Segment` skips that itinerary and counts it in `ProviderResponse.unmappable`; per-reason counts are not reported for unmappable itineraries.
 - Order of checks (first failure wins): O1 in `OfferValidator`, then one shared implementation in `Itinerary`: I1, I2, I4, then for each consecutive pair in segment order I5, I6, I7, I8, and finally I9.
 - `OfferValidator.validateAll` returns a `ValidationSummary(valid, rejectedByReason)`.
 
@@ -193,13 +200,18 @@ AggregateFlightsUseCase
 SearchItinerariesUseCase
   SearchResult search(SearchCriteria criteria, ItineraryFilter filter,
                       Optional<PageCursor> cursor, int limit)
+
+RefreshItinerariesUseCase
+  Optional<AggregationResult> refresh(SearchCriteria criteria)
 ```
+
+`RefreshItinerariesUseCase` is the on-demand refresh (e.g. an operator's request). It follows the same lock and freshness rules as a search's cold miss: it aggregates only while holding the aggregation lock, marks the criteria fresh only if at least one Provider succeeded, and always releases the lock. It returns empty when the lock cannot be taken (another aggregation is running, or the freshness store is unavailable, see Freshness below); nothing is aggregated in that case.
 
 ### Outbound (`domain/port/out`)
 ```
 FlightProviderPort
   Provider provider()
-  List<Offer> fetch(SearchCriteria criteria)   // throws ProviderUnavailableException
+  ProviderResponse fetch(SearchCriteria criteria)   // throws ProviderUnavailableException
 
 ItineraryRepositoryPort
   int upsertAll(Collection<Itinerary> itineraries)   // rows written; cheaper Final Price wins on key conflict
@@ -229,6 +241,11 @@ SearchResult      (ItineraryPage page, Freshness freshness, Optional<Instant> ag
 AggregationResult (int persisted, Map<Provider, ProviderOutcome> outcomes, Instant aggregatedAt)
                   allFailed(): no outcome is OK;  anySucceeded(): at least one outcome is OK
 ProviderOutcome   (ProviderStatus status, int offersReceived, int offersRejected, Duration elapsed)   — succeeded() == (status is OK)
+ProviderResponse  (List<Offer> offers, int unmappable)   — what one provider call delivered. `unmappable` counts the
+                  provider's itineraries the adapter could not turn into an Offer: a Segment broke S1–S3, or a field
+                  was malformed or missing (A1, C1, F1, P1, P3, null entries, unparseable timestamps or amounts).
+                  One unmappable itinerary never fails the provider's response; there is no per-reason breakdown. Invariants R1, R2 (§3).
+                  ProviderResponse.of(offers) has unmappable = 0
 ProviderStatus    Enum — OK, TIMEOUT, ERROR, CIRCUIT_OPEN
 Freshness         Enum — FRESH, STALE, REFRESHING, MISSING
 LockToken         (String value)   — non-blank; identifies one holder of the aggregation lock
@@ -248,6 +265,8 @@ State of the data for one `SearchCriteria`, as seen by `SearchItinerariesUseCase
 | `REFRESHING` | A refresh is already running (lock held) | Serve existing data, do not start another |
 | `MISSING` | Never aggregated for this criteria | Aggregate synchronously, then query |
 
+If the freshness store is unavailable, `status` reports `STALE` and `tryLock` is empty (fail closed): searches serve the repository, nothing is aggregated or refreshed, and a never-aggregated route returns an empty page. This is a deliberate exception to the table above; see `docs/SOLUTION.md` §6.
+
 A request that carries a `PageCursor` never triggers aggregation (pages must stay consistent with page 1).
 
 ### Aggregation lock ownership
@@ -266,7 +285,7 @@ An aggregation in which every Provider failed is not marked fresh, so the next s
 SearchCriteria
    │
    ├─ fan-out ──> FlightProviderPort(ALPHA) ─┐
-   ├─ fan-out ──> FlightProviderPort(BETA)  ─┼─> List<Offer> + per-provider outcome
+   ├─ fan-out ──> FlightProviderPort(BETA)  ─┼─> ProviderResponse + per-provider outcome
    └─ fan-out ──> FlightProviderPort(GAMMA) ─┘
                                    │
                            OfferValidator  (reject invalid, count reasons)
@@ -283,6 +302,7 @@ SearchCriteria
 Resilience rules the application layer must honour:
 - A provider failure (timeout, error, circuit open) produces an `outcome` for that provider and an empty offer list. It never aborts the pipeline.
 - The aggregation succeeds if at least one provider returned OK. If all three fail, the result has zero persisted itineraries and all outcomes non-OK; this is still a normal result, not an exception.
+- Itineraries an adapter could not map (`ProviderResponse.unmappable`) count as received and rejected for that provider: `offersReceived = offers + unmappable`, `offersRejected = OfferValidator rejections + unmappable`. Dead legs are therefore counted per provider even though they never become an Offer.
 - Timeouts and circuit breaker configuration belong to infrastructure. The application layer only sees `ProviderUnavailableException` with a `ProviderStatus`.
 
 ## 10. Out of scope (explicit)

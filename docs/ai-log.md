@@ -182,3 +182,480 @@ Entry format:
 **Decisions:** The prompt's "size 2" does not guarantee two itineraries per provider (each base itinerary is split across providers). AI searched the generator offline and fixed **`MOCK_SEED=17`, `MOCK_OVERLAP_RATIO=1.0`, `MOCK_INVALID_RATIO=0`**: both itineraries are sold by all three providers, one non-stop and one three-leg (Beta emits it as `2,1,3`, so the fixture exercises sequence reordering). The script fails loudly if a future generator change breaks that. The export script starts its own jar instances (port 18081; builds the jar if missing) instead of assuming a running service, because it needs two configurations; it restarts before exporting so Beta's `RequestId` is always `BET-20261120-0000`, which makes the export byte-reproducible (second run: all six "unchanged"). Fixtures are the raw response bodies, not pretty-printed.
 **Human review / corrections:** The human started the Docker daemon, which was down at first. AI fixed three false positives in its own `verify-contract.sh` by running it against a dead URL: two Beta checks compared empty strings, and the Gamma line check passed on an empty body; all now require content (25/25 fail with no server). Verified: `./mvnw verify` green; `docker build -t mock-providers .` succeeds (367 MB); the container reports `healthy`, runs as `app`, and `verify-contract.sh` passes 25/25 against it with chaos off; the same against the local jar. The aggregator has no mapper tests yet, so "fixtures pass the mapper tests" is still open. The fixtures directory was created by the script in `flight-aggregator`.
 **Artifacts:** `mock-providers/Dockerfile`, `mock-providers/.dockerignore`, `mock-providers/scripts/verify-contract.sh`, `mock-providers/scripts/export-fixtures.sh`, `mock-providers/README.md`, `mock-providers/src/main/java/io/github/jerojasol/mockproviders/config/MockProperties.java`, `flight-aggregator/infrastructure/src/test/resources/fixtures/{alpha,beta,gamma}/{two-itineraries,empty}.*`, `mock-providers/prompts/06-dockerfile-and-verify.md`.
+
+## 2026-11-14 — D1: Failsafe activation and ArchitectureTest
+
+**Intent:** Make integration tests actually run and lock the hexagonal structure with ArchUnit before any infrastructure code exists.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/01-architecture-test.md`: declare `maven-failsafe-plugin` (excluding `perf`) plus a `perf` profile; update AGENTS §8 commands; prove Failsafe with a throwaway `SmokeIT`; write `ArchitectureTest` with 10 rules (domain/application dependency limits, no framework annotations in domain, web isolated from outbound adapters, controllers limited to inbound ports, JPA entities confined to persistence, provider packages confined to their adapter or `config`, ports are interfaces, no `@Autowired` fields, layered architecture); prove that a Spring annotation in domain breaks rules 1 and 3.
+**Generated:** Failsafe plugin + `perf` profile (`<excludedGroups combine.self="override"/>`, `<groups>perf</groups>`) in `infrastructure/pom.xml`; AGENTS §8 commands (`verify`, `verify -DskipITs`, `verify -Pperf`; `-Pintegration` removed); `ArchitectureTest` (10 `@ArchTest` fields; rule 7 is a `CompositeArchRule` over alpha/beta/gamma; rules that target still-empty infrastructure packages use `allowEmptyShould(true)`; the layered rule uses `withOptionalLayers(true)`, so an empty Infrastructure layer does not fail).
+**Human review / corrections:** None yet. Findings during verification: (1) `./mvnw -pl infrastructure …` alone does not resolve because the parent POM is not installed; use `-am`. (2) `infrastructure` has no `@SpringBootApplication` yet, so `spring-boot:repackage` fails in `package` before Failsafe runs; Failsafe was verified with `-Dspring-boot.repackage.skip=true` (`SmokeIT`: Tests run: 1; `-Pperf`: Tests run: 0), and `SmokeIT` was deleted. `./mvnw verify` stays red until the application class exists (next step). (3) An unused import produces no bytecode dependency, and `domain/` cannot compile against Spring, so the negative check used a temporary `@Service`-annotated class in package `…domain.model`, placed in infrastructure sources. Rules 1 and 3 failed with readable messages; the class was then removed.
+**Artifacts:** `flight-aggregator/infrastructure/pom.xml`, `flight-aggregator/AGENTS.md`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/ArchitectureTest.java`, `flight-aggregator/prompts/infrastructure/01-architecture-test.md`.
+
+## 2026-11-14 — D1 follow-up: `/check-arch` missing `-am` (AI tooling failure, corrected)
+
+**Intent:** Make `/check-arch` work.
+**Prompt (summary):** Human asked to add `-am` to the ArchUnit command in `/check-arch`, keep the domain/application command as it is, rerun `/check-arch`, and record this as an AI tooling failure.
+**Generated:** One-line change in `flight-aggregator/.opencode/commands/check-arch.md`: `./mvnw -q -pl infrastructure -am test -Dtest=ArchitectureTest -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tail -40`.
+**Human review / corrections:** **AI tooling failure.** The AI wrote the original `/check-arch` command without `-am`. The parent POM `io.github.jerojasol:flight-aggregator` is not installed in the local repository, so Maven could not resolve it and failed before running any test. The command looked like it ran the architecture check, but it never did. The AI found this while doing D1 and proposed the fix; the human approved it. With the fix, the ArchUnit command exits 0 (10/10 rules) and `./mvnw -q -pl domain,application test` exits 0 (unchanged; it already worked because it sits under the reactor root). Lesson: test every new command once and check its exit code; a quiet `-q … | tail` can hide a resolution failure.
+**Artifacts:** `flight-aggregator/.opencode/commands/check-arch.md`.
+
+## 2026-11-14 — D1 follow-up: fix the three domain-guardian findings
+
+**Intent:** Fix the three MINOR findings from the first full `/check-arch` run before starting D2.
+**Prompt (summary):** Human asked for three fixes. (1) Delete `Itinerary.from(Offer, MarkupPolicy)`, which called `Instant.now()`; do not document it; update its only caller, `ItineraryPageTest`. (2) Remove the `Optional<AggregationResult>` parameter from the private `SearchItinerariesService.result(...)` by overloading it, keep `Optional<PageCursor>` (it mirrors the port and is covered by the domain-model.md §8 exception), and keep the behaviour exactly as it was, including when aggregation throws in `coldMiss`. (3) Correct the `ItineraryKey.fromStored` Javadoc.
+**Generated:**
+- (1) The overload is gone. `ItineraryPageTest` passes `Instant.parse("2026-11-14T10:00:00Z")`. The only production path is `ItineraryFactory`, which uses its `Clock`.
+- (2) There are now two private overloads: `result(…, reported)` reads `freshness.lastResult(criteria)`, and `result(…, reported, AggregationResult justAggregated)` uses the fresh result without reading `lastResult` (previously `Optional.or` was lazy, so this matches). In `coldMiss`, the `catch` returns the fallback overload with `MISSING`; the `finally` still releases the lock before the repository is read. On success, `reported` is `FRESH` if `anySucceeded()` and `MISSING` otherwise, the same as before.
+- (3) The Javadoc now says `fromStored` checks the value against `[0-9a-f]{64}` and throws `InvalidItineraryKeyException`; what it trusts is that the key was derived from the segments (the I12 rehydration exception).
+**Human review / corrections:** The human chose all three fixes, including deleting the overload rather than documenting it and keeping `Optional<PageCursor>`. These were AI-written defects found by the AI's own `domain-guardian` review: an undocumented convenience factory that went around the injected `Clock`, an `Optional` parameter outside the documented exception, and a Javadoc that contradicted the code. No test was weakened; the existing `coldMiss` tests passed without changes. Verified: `./mvnw -q -pl domain,application test` passes (215 + 33) and ArchUnit passes 10/10. Not committed.
+**Artifacts:** `flight-aggregator/domain/src/main/java/io/github/jerojasol/flights/domain/model/Itinerary.java`, `flight-aggregator/domain/src/main/java/io/github/jerojasol/flights/domain/model/ItineraryKey.java`, `flight-aggregator/domain/src/test/java/io/github/jerojasol/flights/domain/model/ItineraryPageTest.java`, `flight-aggregator/application/src/main/java/io/github/jerojasol/flights/application/SearchItinerariesService.java`.
+
+## 2026-11-14 — Correction to "fix the three domain-guardian findings": `coldMiss` regression
+
+**Intent:** Undo a behaviour change the AI introduced while removing the `Optional<AggregationResult>` parameter, and correct the claim in the previous entry.
+**Prompt (summary):** `domain-guardian` re-reviewed the three fixes. It confirmed all three findings were resolved and raised two MAJOR regressions in `SearchItinerariesService.coldMiss`.
+**Generated:**
+- `coldMiss` is back to its original try/catch/finally shape, using a method-local `AggregationResult aggregated = null` (it never leaves the method). After the `finally`, the method picks an overload: `aggregated == null ? result(…, reported) : result(…, reported, aggregated)`.
+- Two regression tests in `SearchItinerariesServiceTest`: `should_release_lock_before_reading_repository_when_synchronous_aggregation_throws` and `should_report_just_aggregated_outcomes_as_missing_when_mark_fresh_fails`.
+- Test-fake hooks: `InMemoryItineraryRepository.onFindBy(Runnable)`, `InMemoryFreshness.failingMarkFreshWith(RuntimeException)` and `lastResultCalls()`.
+**Human review / corrections:** **The previous entry was wrong.** It said the lock was still released before the repository read when aggregation throws, and that existing tests proved the behaviour unchanged. Both claims were false:
+1. The AI put `return result(...)` inside the `catch`. Java evaluates the return expression before `finally`, so `repository.findBy` and `freshness.lastResult` ran while the aggregation lock was still held. During that window, concurrent cold misses would get `REFRESHING`.
+2. `markFresh` sat in the same `try` as `aggregate`, so a failing freshness store (for example Redis down) made the response drop the outcomes it had just aggregated and serve the older `lastResult` instead.
+
+The existing tests did not catch either problem: they recorded the order of freshness calls but not where the repository read fell relative to them, and nothing simulated `markFresh` failing. Both new tests failed against the faulty code ("lock held during repository read") before the fix, and pass after it. Verified: 215 domain + 35 application tests and ArchUnit 10/10 pass. Lesson: when a refactor has to keep behaviour the same, first check that tests cover each path being moved (here the exception path, and the order of side effects around `finally`). Not committed.
+**Artifacts:** `flight-aggregator/application/src/main/java/io/github/jerojasol/flights/application/SearchItinerariesService.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/SearchItinerariesServiceTest.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/fakes/InMemoryItineraryRepository.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/fakes/InMemoryFreshness.java`.
+
+## 2026-11-14 — D2: Persistence (Flyway schema, JPA read side, JDBC upsert, keyset pagination)
+
+**Intent:** Implement `ItineraryRepositoryPort` on PostgreSQL: one row per Itinerary Key, cheapest wins, and keyset pagination whose cost does not grow with page depth.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/02-persistence.md`: Flyway `V1__create_itineraries.sql` with commented indexes; package-private `ItineraryJpaEntity` (read side); `ItineraryJpaRepository` with one native keyset `@Query` fetching `limit + 1`; `ItineraryJdbcUpserter` (`batchUpdate`, chunks of 1,000, `ON CONFLICT … WHERE EXCLUDED.final_price < itineraries.final_price`); `ItineraryPersistenceMapper` with a private `SegmentJson` record and Jackson 3; `ItineraryRepositoryAdapter`; `PersistenceConfiguration`; `ItineraryRepositoryAdapterIT` (Testcontainers PostgreSQL 16) and a `@Tag("perf")` `KeysetPaginationPerfIT` on 1M rows.
+**Generated:**
+- `V1__create_itineraries.sql`; every index has a comment saying why it exists (for `SOLUTION.md`).
+- `persistence/`: `ItineraryJpaEntity`, `ItineraryJpaRepository`, `ItineraryJdbcUpserter`, `ItineraryPersistenceMapper` (with an `ItineraryRow` record for the write side), `ItineraryRepositoryAdapter`, `PersistenceConfiguration`. Everything is package-private except `PersistenceConfiguration`; only `ItineraryRepositoryPort` leaves the package.
+- `FlightAggregatorApplication`: the `@SpringBootApplication` class the slice tests need. It also makes `spring-boot:repackage` work, so `./mvnw verify` no longer needs `-Dspring-boot.repackage.skip` (open since D1).
+- Tests: `ItineraryRepositoryAdapterIT` (9) and `KeysetPaginationPerfIT` (1, perf only).
+**Decisions:**
+- **Keyset on `(final_price, itinerary_key)`, not `(final_price, id)` as the prompt said.** The domain's `PageCursor` is `(lastFinalPrice, lastKey)`, `domain-model.md` §8 defines page order as (final price, key), and AGENTS.md §4 forbids database ids in the domain. `ix_itineraries_search` therefore ends in `itinerary_key`. The key is unique, so it is as good a tie-break as `id`, and the in-memory test repository in `application` already used the same order.
+- **Carrier filter uses `carriers @> ARRAY[:carrier]`, not `:carrier = ANY(carriers)`.** Both give the same results, but only `@>` can use the GIN index. With `= ANY`, the index comment would have been false.
+- Null optional filters are passed as `CAST(:p AS type) IS NULL` so Postgres can type a null parameter.
+- The entity maps only the columns needed to rebuild an Itinerary. `CHAR(n)` columns use `@JdbcTypeCode(SqlTypes.CHAR)` and `segments` uses `@JdbcTypeCode(SqlTypes.JSON)` on a `String`.
+- Segment JSON stores instants as ISO strings, so the stored format never depends on mapper settings.
+- `ItineraryFilter.origin/destination` that contradict the criteria return an empty page without a query; matching ones are no-ops.
+- `PersistenceConfiguration` lives in `persistence/`, not `config/`, because the types it wires are package-private.
+- The IT runs with `@Transactional(NOT_SUPPORTED)` and truncates the table before each test. With a shared rolled-back test transaction, Hibernate could serve cached entities after a JDBC upsert and hide what the database actually holds.
+**Human review / corrections:** None yet.
+- The `(final_price, itinerary_key)` deviation is reported for human confirmation.
+- Verified: 215 domain + 35 application tests, ArchUnit 10/10, and 9/9 ITs pass under `./mvnw -pl infrastructure -am verify`. `-Pperf` runs only the perf test.
+- Perf on 1,000,000 rows of one route and date, page of 20 at depth 900,000, Postgres 16 in Testcontainers on a laptop: keyset **0.145 ms** using `ix_itineraries_search`, `OFFSET 900000` **444.136 ms**. These numbers are for `SOLUTION.md` §4.3.
+- `ddl-auto=validate` was shown to be active: renaming a mapped column made all 9 ITs fail with `Schema validation: missing column [source_x]`, and the column was then restored.
+- **AI tooling defect found:** `/test-layer` has the same missing `-am` as `/check-arch` had. Its `application`, `infrastructure` and `it` mappings fail before running any test (checked: `-pl infrastructure verify` and `-pl application test` both exit 1). Not fixed yet; proposed to the human.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/resources/db/migration/V1__create_itineraries.sql`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/FlightAggregatorApplication.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/persistence/**`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/persistence/**`, `flight-aggregator/prompts/infrastructure/02-persistence.md`.
+
+## 2026-11-14 — D2 follow-up: keyset query plan, currency in price filters, update counts
+
+**Intent:** Fix two `domain-guardian` findings and a query-plan problem in the persistence adapter before committing D2.
+**Prompt (summary):** Human asked for three fixes:
+1. Split the keyset query into a first-page query and a later-pages query with a plain row comparison, because `(:cursorPrice IS NULL OR (final_price, itinerary_key) > …)` cannot be an index condition under a generic plan. The human measured 9,256 vs 55 buffers for a page 90% deep on 1M rows. Add an IT that forces a generic plan and asserts the row comparison is in `Index Cond`, not `Filter`.
+2. Currency option (a): filter by the currency of `maxPrice` and of the cursor price, and return an empty page when the two differ. Add an IT for a `maxPrice` in another currency.
+3. Throw on a negative JDBC update count instead of counting 0, with a unit test on a stubbed `JdbcTemplate` (no `reWriteBatchedInserts` IT).
+
+Also: correct the D2 prompt so the cursor is `(final_price, itinerary_key)`.
+**Generated:**
+- `ItineraryJpaRepository` now has `FIRST_PAGE` and `NEXT_PAGE` as public constants on the interface, so the plan test EXPLAINs the exact SQL that runs, with `findFirstPage` / `findNextPage` using them. A `currency` filter is added, and route parameters are cast to `char(3)`.
+- `ItineraryRepositoryAdapter` resolves the currency from `maxPrice` or the cursor; a mismatch returns `ItineraryPage.empty()` without querying.
+- `ItineraryJdbcUpserter` throws `IllegalStateException` on a negative count.
+- Tests:
+  - `ItineraryJdbcUpserterTest` (2 unit tests).
+  - 3 new `ItineraryRepositoryAdapterIT` cases: `maxPrice` in USD, cursor in USD, mismatch.
+  - `KeysetQueryPlanIT`: 50k rows plus `ANALYZE`; one connection runs `SET plan_cache_mode = force_generic_plan`, then `PREPARE` from `NEXT_PAGE` with `:name` turned into `$n`, typed as pgjdbc binds them, then `EXPLAIN (FORMAT JSON) EXECUTE`; it walks the plan JSON.
+- `KeysetPaginationPerfIT` now uses the `NEXT_PAGE` predicates and binds the route as parameters.
+- D2 prompt: cursor and index are `(final_price, itinerary_key)`, with a note on why the cursor must not use `IS NULL OR`.
+**Human review / corrections:** The human found the generic-plan problem; the AI had written the cursor in the `IS NULL OR` form the prompt suggested, and its perf test did not catch it, because it ran `EXPLAIN ANALYZE` with literals, which get a custom plan.
+
+**A second, worse bug, which the new plan IT found on its first run:** `origin` and `destination` are `CHAR(3)`, and pgjdbc binds Java Strings as `varchar`. So `origin = :origin` became `(origin)::text = $1`, which casts the indexed column. Postgres could not use `ix_itineraries_search` at all, and the plan was a **Seq Scan + Sort for every search, first page included**. The original IT and the perf IT both missed it because they used literals (`'MAD'` is typed `char`) or only checked results. Fix: `CAST(:origin AS char(3))`, `CAST(:destination AS char(3))`.
+
+Verified:
+- With the old `IS NULL OR` cursor put back temporarily, `KeysetQueryPlanIT` fails (no `Index Cond` contains `ROW(final_price, itinerary_key) > ROW(`); it was then restored.
+- `./mvnw -pl infrastructure -am verify` passes: 215 domain, 35 application, 12 infrastructure unit tests (ArchUnit 10/10 + upserter 2), and 13 ITs (12 adapter + 1 plan).
+- Perf with the route bound as varchar parameters: keyset **0.209 ms** vs `OFFSET 900000` **550.967 ms**. These replace the D2 entry's 0.145 / 444.136 ms, which were measured with literals and so did not reflect real binding.
+
+Lesson: a plan assertion must use the same parameter types and plan mode as production; literals in EXPLAIN can hide both bugs. Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/persistence/ItineraryJpaRepository.java`, `…/persistence/ItineraryRepositoryAdapter.java`, `…/persistence/ItineraryJdbcUpserter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/persistence/ItineraryJdbcUpserterTest.java`, `…/persistence/ItineraryRepositoryAdapterIT.java`, `…/persistence/KeysetQueryPlanIT.java`, `…/persistence/KeysetPaginationPerfIT.java`, `flight-aggregator/prompts/infrastructure/02-persistence.md`.
+
+## 2026-11-14 — D2 follow-up: upsert must not compare prices across currencies
+
+**Intent:** Fix the MAJOR P4 finding from `domain-guardian`'s third D2 review: the upsert compared prices across currencies.
+**Prompt (summary):** Human approved the AI's recommendation: add a currency-equality condition to the upsert's conflict update, add the reviewer's IT, and record the remaining mixed-currency ordering gap in `SOLUTION.md` instead of fixing it now.
+**Generated:**
+- `ItineraryJdbcUpserter`: `AND EXCLUDED.currency = itineraries.currency` in the `ON CONFLICT … DO UPDATE WHERE`, and the class Javadoc now explains it. A conflict in another currency writes nothing and counts 0.
+- `ItineraryRepositoryAdapterIT.should_leave_row_untouched_when_same_key_arrives_cheaper_in_another_currency`: stores EUR 100, upserts the same key at USD 50, and asserts count 0, base price still EUR 100, final price and source unchanged.
+- `docs/SOLUTION.md` §6: under the single-currency bullet, how currency is handled and the known gap (an unfiltered first page orders mixed-currency rows by raw amount if the reference currency ever changes).
+**Human review / corrections:** The defect was in the AI's original D2 upsert. Before the fix, a cheaper USD offer overwrote a EUR row and kept `currency = 'EUR'`, re-labelling the price. The reviewer missed it in its first D2 review and caught it on the second, which is why reviewing again after each fix was worth it. The human chose skipping the update over throwing, so one row in another currency cannot fail a whole aggregation. Verified: with the new condition removed temporarily, the new IT fails (`expected: 0 but was: 1`); it was then restored. `./mvnw -pl infrastructure -am verify` passes: 215 domain, 35 application, 12 infrastructure unit, 14 ITs. `/check-arch` passes (ArchUnit 10/10; domain/application unchanged). Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/persistence/ItineraryJdbcUpserter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/persistence/ItineraryRepositoryAdapterIT.java`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — `/test-layer` missing `-am` (AI tooling failure, corrected)
+
+**Intent:** Make every `/test-layer` option run its tests.
+**Prompt (summary):** Human approved adding `-am`, as was done for `/check-arch`.
+**Generated:** In `flight-aggregator/.opencode/commands/test-layer.md`, the `application`, `infrastructure` and `it` mappings now use `-pl <module> -am`. `domain` and `all` are unchanged; they already worked.
+**Human review / corrections:** **AI tooling failure, the same as `/check-arch`.** The command was written without `-am`, so any module that depends on another (`application`, `infrastructure`) could not resolve the uninstalled parent POM, and Maven failed before running any test. Found during D2. Verified each mapping by exit code: `-pl domain test` 0; `-pl application test` 1 before, `-pl application -am test` 0 after; `-pl infrastructure -am test` 0; `-pl infrastructure -am verify` 0; `verify` 0. Side effect: `-am` also runs the tests of upstream modules, so the `application` and `infrastructure` layers report domain (and application) counts too. A first check loop reported every command as failing; that was the AI's shell script (zsh does not word-split `$c`), not Maven, and was rerun with `${=c}`.
+**Artifacts:** `flight-aggregator/.opencode/commands/test-layer.md`.
+
+## 2026-11-14 — D3 (Alpha): provider adapter, and a port change so dead legs are counted
+
+**Intent:** Implement the Alpha provider adapter (fixtures, DTOs, mapper, client, resilience, wiring), the first of three D3 runs, and make itineraries that cannot be mapped visible in the per-provider counts.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/03-provider-adapter.md` for Alpha: fixtures first; DTOs in Alpha's vocabulary; `AlphaOfferMapper` returning offers plus a skipped count; `AlphaClient` on `RestClient`; `AlphaProviderAdapter` with programmatic Retry(CircuitBreaker(TimeLimiter)); `ProviderConfiguration`; `AlphaOfferMapperTest` with fixtures and `AlphaProviderAdapterIT` with WireMock.
+**Decisions:**
+- **Port change, chosen by the human from three options.** `FlightProviderPort.fetch` returned `List<Offer>`, so a skipped count could not reach the application. The provider contract says dead legs must be "dropped and counted per provider", and dead legs fail `Segment` construction (S1–S3) inside the mapper. The new domain record `ProviderResponse(List<Offer> offers, int unmappable)` is returned by the port, and the application counts unmappable itineraries as received and rejected. `domain-model.md` §8–§9 was updated before the code (AGENTS §9). The prompt's `MappingResult` is therefore the domain's `ProviderResponse`; there is no extra infrastructure type.
+- **Skipped means folded into `offersRejected`** (the prompt asked for this decision): `offersReceived = offers + unmappable`, `offersRejected = OfferValidator rejections + unmappable`.
+- The mapper skips an itinerary on any `DomainException` or `DateTimeParseException` while building it (dead legs, malformed codes or timestamps). Connection rules are still checked only by `OfferValidator`, so each rule is enforced in one place.
+- **Fixtures:** `two-itineraries.json` and `empty.json` are the files exported by `mock-providers/scripts/export-fixtures.sh` (the sanctioned channel), so they were kept. The contract's example, copied verbatim, went into a new `contract-example.json`; it already contains the Alpha trap (`"flightNo": "0117"`), so it is also the trap fixture. New: `error-500.json` (contract body) and `dead-legs.json` (MAD→MAD, and arr = dep).
+- Alpha's body is a top-level array, so there is no `AlphaSearchResponse` wrapper; `AlphaItinerary` / `AlphaSegment` records hold raw strings and the mapper normalises. `AlphaResponseParser` is shared by the client and the tests, with exact BigDecimal prices and unknown fields ignored.
+- Resilience lives in a shared `provider/ProviderResilience` (plus `ResilienceSettings.defaults`: window 10, 50%, 30 s open, 2 attempts) so Beta and Gamma reuse it. ArchUnit rule 7 constrains only `provider.<name>`. Retry covers only `ERROR`, which includes 4xx because the prompt maps 4xx to `ERROR`; `TIMEOUT` and `CIRCUIT_OPEN` are never retried.
+- `ProviderConfiguration` and `ProviderProperties` live in `infrastructure.config`. A virtual-thread executor runs calls under the TimeLimiter. Only the Alpha bean exists so far.
+**Human review / corrections:** The human chose the port change and the stop after Alpha. **AI defect found by the tests:** the HTTP read timeout was set equal to the TimeLimiter budget. The HTTP client sometimes timed out first, so the attempt failed as an I/O error, was classified `ERROR` and retried. A slow provider then took two full budgets (2.02 s for a 1 s budget) and was reported as `ERROR` instead of `TIMEOUT`. Fix: the read timeout is now a backstop at 2× the budget, and an `HttpTimeoutException` / `SocketTimeoutException` anywhere in the cause chain is classified as `TIMEOUT`. The IT asserts exactly one request on timeout. Separately, a 300 ms test timeout was too short for the first HTTP call in a fresh JVM (class loading); the tests now use 1 s. Verified: `AlphaProviderAdapterIT` passed 4 runs in a row; full `./mvnw -pl infrastructure -am verify` passes (219 domain, 36 application, 17 infrastructure unit tests, 20 ITs); ArchUnit 10/10.
+**Contract ambiguity (Alpha):** nothing blocked the work. Two points are unspecified:
+1. the `Content-Type` of the 400 and 500 bodies (the adapter does not depend on it);
+2. whether Alpha may add fields to an itinerary (the adapter ignores unknown fields).
+
+Proposed wording for `provider-contracts.md`, Alpha: "Error responses (`400`, `500`) are sent with `Content-Type: application/json`. Clients must ignore unknown fields in both success and error bodies."
+**Artifacts:** `flight-aggregator/docs/domain-model.md`, `flight-aggregator/domain/src/main/java/io/github/jerojasol/flights/domain/model/ProviderResponse.java`, `flight-aggregator/domain/src/main/java/io/github/jerojasol/flights/domain/port/out/FlightProviderPort.java`, `flight-aggregator/domain/src/test/java/io/github/jerojasol/flights/domain/model/ProviderResponseTest.java`, `flight-aggregator/application/src/main/java/io/github/jerojasol/flights/application/AggregateFlightsService.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/{AggregateFlightsServiceTest,fakes/StubProvider}.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/{ProviderResilience,ResilienceSettings}.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/alpha/**`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/{ProviderConfiguration,ProviderProperties}.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/alpha/**`, `flight-aggregator/infrastructure/src/test/resources/fixtures/alpha/{contract-example,error-500,dead-legs}.json`, `flight-aggregator/prompts/infrastructure/03-provider-adapter.md`.
+
+## 2026-11-14 — D3 (Alpha) follow-up: null entries, unmappable wording, invariant IDs
+
+**Intent:** Fix the three MINOR `domain-guardian` findings on D3 (Alpha) before starting Beta, so Beta and Gamma inherit the corrected pattern.
+**Prompt (summary):** Human approved the AI's recommended order:
+1. Explicit null checks in `AlphaOfferMapper` (not `catch (RuntimeException)`), with a `null-entries.json` fixture and a test.
+2. Carry the rule into the D3 prompt for Beta and Gamma.
+3. Make `domain-model.md` §8 and §6 describe what "unmappable" really covers, with no per-reason breakdown.
+4. Add invariant IDs R1, R2 (`ProviderResponse`) and PO1 (`ProviderOutcome`) to §3, and tag the tests.
+**Generated:**
+- `AlphaOfferMapper`: a null itinerary and a null segment entry are counted as unmappable and logged without dereferencing them. Still only `DomainException` / `DateTimeParseException` are caught. The null-segment check uses `stream().anyMatch(Objects::isNull)`, because `List.contains(null)` throws on immutable JDK lists.
+- `fixtures/alpha/null-entries.json` and test `should_skip_and_count_null_entries_without_failing_the_response` (1 offer, 2 unmappable).
+- `prompts/infrastructure/03-provider-adapter.md`:
+  - The mapper returns the domain's `ProviderResponse`; the old `MappingResult` wording is gone.
+  - One bad itinerary never fails the response, and nulls and structural problems are checked explicitly.
+  - Catch only `DomainException` plus the format's parse exception (Beta `DateTimeException`, Gamma `NumberFormatException` / `DateTimeParseException`).
+  - Fixtures: do not overwrite the exported `two-itineraries.*` / `empty.*`; each provider gets `dead-legs.*` and a malformed-entries fixture with a test.
+- `domain-model.md`: the §8 `ProviderResponse` entry covers S1–S3 and malformed or missing fields; §6 says Segment failures go to `ProviderResponse.unmappable` with no per-reason counts; §3 adds R1, R2 and PO1.
+- Tests: `// R1` / `// R2` tags in `ProviderResponseTest`, a `// PO1` tag in `AggregationResultTest`, and a new `ProviderOutcomeTest` (4 tests) for the parts of PO1 that had no test (negative rejected count, null status, null elapsed, zero values accepted).
+**Human review / corrections:** The human approved all three findings and the order. The null-entry gap was an AI defect: the mapper's own Javadoc promised "never fails the whole response", but a single `null` in Alpha's array would have dropped every valid Alpha offer, with Alpha reported as `ERROR`. With the null checks removed temporarily, the new test failed with exactly that `NullPointerException`; the checks were then restored. While tagging, the AI found that PO1 was only partly tested (received count and elapsed only), hence `ProviderOutcomeTest`. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 18 infrastructure unit tests, 20 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/alpha/AlphaOfferMapper.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/alpha/AlphaOfferMapperTest.java`, `flight-aggregator/infrastructure/src/test/resources/fixtures/alpha/null-entries.json`, `flight-aggregator/prompts/infrastructure/03-provider-adapter.md`, `flight-aggregator/docs/domain-model.md`, `flight-aggregator/domain/src/test/java/io/github/jerojasol/flights/domain/model/{ProviderResponseTest,AggregationResultTest,ProviderOutcomeTest}.java`.
+
+## 2026-11-14 — D3 (Alpha) follow-up: unreadable prices are unmappable, not a failed response
+
+**Intent:** Fix `domain-guardian`'s MINOR finding: an unreadable amount failed Alpha's whole response, although §8 says unparseable amounts count as unmappable.
+**Prompt (summary):** Human chose option (a): keep the price as raw text in the DTO and parse it in the mapper. Add a fixture and test, and a prompt line so Beta and Gamma do the same.
+**Generated:**
+- `AlphaItinerary.price` is now a `String`; `AlphaOfferMapper` calls `Price.of(price, currency)` per itinerary, so a bad amount becomes `InvalidPriceException` and is counted as unmappable.
+- `AlphaResponseParser` no longer needs `USE_BIG_DECIMAL_FOR_FLOATS`.
+- `fixtures/alpha/malformed-values.json` (`"abc"`, `""` and one valid itinerary) with test `should_skip_and_count_itineraries_with_unreadable_price_without_failing_the_response` (1 offer, 2 unmappable).
+- `should_keep_exact_decimal_text_when_price_is_a_json_number` (`1465.90` stays exact).
+- `prompts/infrastructure/03-provider-adapter.md` §2: DTO fields hold raw strings; numbers, amounts, dates and timestamps are parsed in the mapper, never by the format parser.
+**Human review / corrections:** The human chose option (a) over narrowing §8 (option b). This was an AI defect of the same kind as the null entries: timestamps were already kept raw, but the price was typed `BigDecimal`, so Jackson converted it while reading the whole body. With the old `BigDecimal` field restored temporarily, the new test failed with `InvalidFormat: Cannot deserialize value of type BigDecimal from String "abc"`; it was then restored. Note: a body that is not valid JSON, or a price that is a JSON object, still fails the whole response as `ERROR`; that is the format parser's job and the existing IT covers the non-JSON case. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 20 infrastructure unit tests, 20 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/alpha/{AlphaItinerary,AlphaOfferMapper,AlphaResponseParser}.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/alpha/AlphaOfferMapperTest.java`, `flight-aggregator/infrastructure/src/test/resources/fixtures/alpha/malformed-values.json`, `flight-aggregator/prompts/infrastructure/03-provider-adapter.md`.
+
+## 2026-11-14 — D3 (Beta): XML provider adapter
+
+**Intent:** Implement the Beta provider adapter: XML over Jackson 3, local time plus IANA zone converted to instants, legs sorted by sequence, and the same resilience and mapping rules as Alpha.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/03-provider-adapter.md` for Beta: fixtures first; Jackson XML response DTOs in Beta's vocabulary; `BetaOfferMapper` returning `ProviderResponse`; `BetaClient` on `RestClient`; `BetaProviderAdapter` with the shared resilience; mapper and WireMock tests.
+**Generated:**
+- Fixtures (`fixtures/beta/`): `contract-example.xml` (the contract's example, verbatim), `error-500.xml` (the contract's Fault), `dead-legs.xml`, `malformed-entries.xml` (an itinerary without `Pricing`, one leg without `Flight`, one with the unknown zone `Mars/Olympus`, one valid itinerary). `two-itineraries.xml` and `empty.xml` are the exported files, which already have the trap (legs 2, 1, 3), so no separate trap file was needed.
+- DTOs: `BetaSearchResponse` as records with `@JacksonXmlProperty` for elements and attributes. All values are raw strings (`BetaResponseParser` / `BetaOfferMapper` parse them). `BetaResponseParser` ignores unknown properties.
+- Mapper: local time + IANA zone → `Instant` via `ZonedDateTime`; legs sorted by `sequence`, which must then read 1..n; `FlightNumber` from airline code + `Number`; price from `Total/@amount` and `Total/@currency`. Null entries and missing elements are checked explicitly.
+- `ProviderRestClients`: the HTTP client construction was moved from `AlphaClient` into a shared helper, so all three providers share the same timeout backstop (2× budget).
+- `BetaClient`, `BetaProviderAdapter`, and a `betaProvider` bean in `ProviderConfiguration`.
+- Tests: `BetaOfferMapperTest` (8, including the trap, the contract example, the dead leg, the malformed entries, a sequence gap, and a missing root element) and `BetaProviderAdapterIT` (6, with WireMock).
+**Decisions:**
+- **Structural problems use a mapper-private `MalformedEntry`.** The prompt says to catch only the format's own parse exceptions alongside `DomainException`. Explicit checks throw `MalformedEntry`, and the mapper catches it with `DomainException | DateTimeException`. Nothing broader is caught.
+- **A missing `Itineraries` element fails the whole response** (`IllegalStateException` → `ERROR`). This is a structure problem of the whole document, not one itinerary, so it does not count as unmappable.
+- **Leg sequence must read 1..n with no gap or repeat.** The contract only says sequence is 1-based and may arrive out of order. A gap or repeat makes the itinerary ambiguous, so it is unmappable. This is an infrastructure decision; the domain model does not need to change.
+- **Currency comes from `Total/@currency`.** The contract also has `Meta/Currency`. The adapter uses the price's own currency, since that is what `Price` needs.
+**Human review / corrections:** The first run failed in an AI-written DTO: the root record component was named `itineraries`, but the element is `Itineraries`. Jackson XML matches names case-sensitively, so the whole body mapped as "no Itineraries element" (`IllegalStateException`) and 7 mapper tests failed. The fix was an explicit `@JacksonXmlProperty(localName = "Itineraries")`. Namespace matching by local name worked without extra configuration. One test expectation was also wrong: the arrival of `BA117` (13:55 New York) is 18:55Z, not 13:55Z, and the code computed it correctly. The expectation was corrected. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 28 infrastructure unit tests, 26 ITs); `/check-arch` commands pass (ArchUnit 10/10).
+**Contract ambiguities (Beta), not guessed:**
+1. Whether `Itineraries/@count` must equal the number of `Itinerary` elements. The adapter ignores `count`.
+2. Whether `Total/@currency` must equal `Meta/Currency`. The adapter uses `Total/@currency`.
+3. Whether legs may have a gap in `sequence`. The contract says 1-based; the adapter treats a gap as malformed.
+4. The `Content-Type` of the 400 and 500 Fault bodies (same gap as Alpha).
+
+Proposed wording for `provider-contracts.md`, Beta section: "`Itineraries/@count` equals the number of `Itinerary` elements. `Leg/@sequence` values are exactly 1..n for each itinerary. `Total/@currency` equals `Meta/Currency`. Error responses (`400`, `500`) are sent with `Content-Type: application/xml`. Clients must ignore unknown elements and attributes."
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/beta/**`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/ProviderRestClients.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/alpha/AlphaClient.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/ProviderConfiguration.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/beta/**`, `flight-aggregator/infrastructure/src/test/resources/fixtures/beta/{contract-example,error-500,dead-legs,malformed-entries}.xml`.
+
+## 2026-11-14 — D3 (Beta) follow-up: DTO names, daylight saving, contract breaches not retried
+
+**Intent:** Fix the three MINOR `domain-guardian` findings on D3 Beta, and set the failure rules Gamma must follow.
+**Prompt (summary):** Human approved all three findings and gave the details:
+1. Rename the Beta DTOs to `BetaItinerary` / `BetaAirportRef`.
+2. Daylight saving, option (b): a local time in a gap is malformed, an overlap keeps the earlier offset; mapper tests; the rule and the limitation recorded in the contract and in `SOLUTION.md` §6.
+3. `ProviderContractViolation` for a 200 body that breaks the contract (Alpha and Beta): not retried, but recorded by the breaker; WireMock ITs asserting exactly one request.
+4. The D3 prompt for Gamma lists the three failure kinds; a stream without `#END` is truncated, so it is a transport failure and stays retryable.
+**Generated:**
+- `BetaSearchResponse.BetaItinerary` and `BetaAirportRef`; Jackson `localName`s unchanged. `BetaOfferMapper` no longer imports a DTO named like the domain aggregate.
+- `BetaOfferMapper.instant`: `getValidOffsets(local).isEmpty()` → `MalformedEntry` (unmappable); otherwise `ZonedDateTime.of(...).withEarlierOffsetAtOverlap()`. Mapper tests: `2026-03-29T02:30 Europe/Madrid` → unmappable; `2026-10-25T02:30 Europe/Madrid` → `2026-10-25T00:30:00Z`.
+- `infrastructure.provider.ProviderContractViolation`, thrown by `AlphaResponseParser` and `BetaResponseParser` on a `JacksonException`, and by `BetaOfferMapper` when `Itineraries` is missing (it was an `IllegalStateException`). In `ProviderResilience`, the retry predicate excludes an `ERROR` whose cause is a `ProviderContractViolation`; the breaker still records it.
+- ITs: Alpha non-JSON body; Beta without `Itineraries`; Beta unreadable XML. Each gives `ERROR` after exactly one request, with the violation as the cause.
+- `mock-providers/docs/provider-contracts.md`, Beta conventions: the daylight-saving rule and its limitation. `docs/SOLUTION.md` §6: the same limitation under exact-key deduplication.
+- `prompts/infrastructure/03-provider-adapter.md`:
+  - the three failure kinds (one itinerary → unmappable; whole-body breach → `ProviderContractViolation`, not retried; transport → retried);
+  - `MalformedEntry` named as an allowed catch;
+  - retry only on transport `ERROR`s, reusing `ProviderResilience` and `ProviderRestClients`;
+  - Gamma's missing `#END` is truncation, so `ERROR` after a retry (two requests).
+**Human review / corrections:** The human approved all three findings and set the exact rules, including that the breaker still records contract breaches and that truncated Gamma streams stay retryable. Verified: with the retry exclusion removed temporarily, all three new ITs failed (`Expected exactly 1 requests … but received 2`); with the gap check removed temporarily, the DST gap test failed. Both were restored. Note on the process: the first regression check removed both fixes at once, and Surefire stopped on the mapper test before Failsafe ran, so the retry change was checked again on its own. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 30 infrastructure unit tests, 27 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Contract change:** the Beta section of `mock-providers/docs/provider-contracts.md` now documents how a consumer resolves daylight saving, and its limitation. The response format is unchanged, so `mock-providers` code and the exported fixtures are unaffected.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/{ProviderContractViolation,ProviderResilience}.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/alpha/AlphaResponseParser.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/beta/{BetaSearchResponse,BetaResponseParser,BetaOfferMapper}.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/{alpha/AlphaProviderAdapterIT,beta/BetaOfferMapperTest,beta/BetaProviderAdapterIT}.java`, `flight-aggregator/prompts/infrastructure/03-provider-adapter.md`, `mock-providers/docs/provider-contracts.md`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — D3 (Gamma): streamed CSV provider adapter
+
+**Intent:** Implement the last provider adapter: Gamma's streamed CSV, read line by line without buffering, with the three failure kinds agreed after Beta.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/03-provider-adapter.md` for Gamma: fixtures first; no DTO tree but a line parser plus a streaming reader that requires `#END`; `GammaOfferMapper` (cents, `yyyyMMddHHmm` UTC, `|` then `;`); client, adapter on the shared resilience; mapper tests and a WireMock IT.
+**Generated:**
+- Fixtures (`fixtures/gamma/`):
+  - `contract-example.csv`: the contract's example plus `#END`. It also serves as the trap fixture (`BA;0117`, `UX;0091`, a two-segment packed field).
+  - `error-500.txt`: the contract's text, as `.txt` because Gamma's errors are `text/plain`.
+  - `dead-legs.csv`.
+  - `malformed-entries.csv`: wrong field count, non-numeric cents, bad timestamp, a segment with five attributes, a blank line, and one valid line.
+  - `truncated-no-end-marker.csv`.
+  - The exported `two-itineraries.csv` and `empty.csv` were kept.
+- Code (`provider/gamma/`):
+  - `GammaLine` (raw strings) and `GammaLineParser` (shape only; private `MalformedLine`).
+  - `GammaStreamReader`: header check, data lines to a consumer, stop at `#END`; `TruncatedStream` when the stream ends early.
+  - `GammaOfferMapper`, `GammaClient`, `GammaProviderAdapter`, and a `gammaProvider` bean.
+- Tests: `GammaOfferMapperTest` (9) and `GammaProviderAdapterIT` (8, including a chunked stream via WireMock's `withChunkedDribbleDelay`).
+**Decisions:**
+- **Three failure kinds**, as agreed:
+  - one bad line → unmappable;
+  - wrong header, or data after `#END` → `ProviderContractViolation` (`ERROR`, not retried);
+  - stream ended before `#END` → `TruncatedStream` (`ERROR`, retried). An I/O error while reading becomes Spring's `ResourceAccessException` (`ERROR`, retried).
+- **An empty body is truncation, not a contract breach.** A stream cut before the header is the same transport failure as one cut before `#END`. Only a header that is present but wrong breaches the contract. This was the AI's first version wrong: `header == null` was a contract violation; it was corrected before the tests were written.
+- **A blank line between data lines counts as one unmappable line** (wrong field count), consistent with "one bad entry never fails the response".
+- **The client takes a reader callback instead of returning an `InputStream`.** The prompt suggested returning the stream, but then the connection either closes when `exchange` returns or stays open if a caller forgets to close it. The callback runs inside `exchange`, so the body is streamed and the connection always closes.
+- Error bodies are read up to 2 KB, since a 500 body should never be large.
+**Human review / corrections:** None yet. Verified:
+- With truncation temporarily thrown as `ProviderContractViolation`, the truncated IT failed (it expects a retry); it was then restored.
+- `GammaProviderAdapterIT` passed 3 runs in a row.
+- `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 39 infrastructure unit tests, 35 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+
+**Known limitation:** when the TimeLimiter abandons a slow export, the reading thread is not interrupted. It keeps reading until the stream ends or the backstop read timeout (2× budget) fires, so a very large export that keeps sending data can outlive its budget in the background, on a virtual thread.
+**Contract ambiguities (Gamma), not guessed:**
+1. The example in the contract has no `#END` line, though the conventions say `#END` marks a complete stream. The real mock sends it. The fixture follows the conventions and the mock.
+2. "Empty result: header line only" does not mention `#END`; the mock sends a header then `#END`.
+3. Whether a blank line may appear in the body.
+
+Proposed wording for `provider-contracts.md`, Gamma section: add `#END` as the last line of the example; "Empty result: the header line, then `#END`."; "There are no blank lines; every line between the header and `#END` is one itinerary."
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/gamma/**`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/ProviderConfiguration.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/gamma/**`, `flight-aggregator/infrastructure/src/test/resources/fixtures/gamma/{contract-example.csv,error-500.txt,dead-legs.csv,malformed-entries.csv,truncated-no-end-marker.csv}`.
+
+## 2026-11-14 — D3 (Gamma) follow-up: empty-result wording, blank lines, rejected requests, currency minor units
+
+**Intent:** Fix the four MINOR `domain-guardian` findings on D3 Gamma. Two of them change all three providers.
+**Prompt (summary):** Human approved all four, changing two of the AI's proposals:
+1. Contract: an empty result is the header plus `#END`, and `#END` is added to the example.
+2. Blank lines are skipped and not counted.
+3. 4xx: a new `ProviderRequestRejected` (not `ProviderContractViolation`) for 4xx other than 408 and 429, in all three clients. Not retried, and ignored by the circuit breaker, because the provider is healthy and the fault is in our request. `ProviderContractViolation` stays for unreadable 200 bodies and is still recorded. 408, 429 and 5xx remain retryable. The 400 ITs assert exactly one request and an unchanged breaker failure count. A fourth failure kind goes into the prompt.
+4. Currency scale from `getDefaultFractionDigits()`; a negative value (XXX, XAU) makes the line unmappable. Tests for JPY and XXX, and the 3-decimal rounding limitation in `SOLUTION.md` §6.
+**Generated:**
+- `mock-providers/docs/provider-contracts.md` (Gamma): `#END` closes the example; "Empty result: the header line followed by `#END`."
+- `GammaStreamReader` skips blank data lines without counting them. The `malformed-entries.csv` test now expects 4 unmappable (it was 5).
+- `infrastructure.provider.ProviderRequestRejected` and `ProviderRestClients.httpError(provider, status, body)`, now used by all three clients. In `ProviderResilience`: the retry predicate excludes it, `CircuitBreakerConfig.ignoreException(...)` ignores it, and a public `failedCalls()`. Each adapter has a package-private `circuitFailedCalls()` for the ITs.
+- Tests:
+  - The three 400 ITs (Alpha, Beta, Gamma): a 500 first (the breaker records 2), then a 400 → exactly 1 request, cause `ProviderRequestRejected`, failure count still 2.
+  - `ProviderRestClientsTest` (parameterised): 400/401/403/404/422 are rejected; 408/429/500/502/503 stay retryable.
+- `GammaOfferMapper.minorUnitDigits`: a non-ISO code or negative digits → `MalformedLine`. Tests: JPY `15000` → ¥15000; an XXX line is unmappable.
+- `docs/SOLUTION.md` §6: the scale-2 rounding of 3-decimal currencies (KWD) and the dropping of pseudo-currencies.
+- `prompts/infrastructure/03-provider-adapter.md`: "Four failure kinds"; the new kind is rejected requests (4xx other than 408/429); `Retry` excludes `ProviderRequestRejected`.
+**Human review / corrections:** The human changed two of the AI's proposals:
+- **4xx gets its own exception, `ProviderRequestRejected`,** instead of reusing `ProviderContractViolation`, because the two differ for the breaker. A broken body means the provider is unhealthy (recorded); a rejected request means our request was wrong (ignored).
+- **Pseudo-currencies are unmappable** (the AI had only proposed using the currency's minor units).
+
+Regression checks, each fix removed temporarily and then restored:
+- without the breaker ignore, the three 400 ITs failed (`expected: 2`, `but was: 3`);
+- without the retry exclusion, they failed (`received 2` requests);
+- without blank-line skipping, the malformed-entries test failed;
+- with the scale hard-coded to 2, the JPY and XXX tests failed.
+
+Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 51 infrastructure unit tests, 35 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Contract change:** wording only (the example and the empty-result line); the mock already sent `#END`, so its code and the exported fixtures are unaffected.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/{ProviderRequestRejected,ProviderRestClients,ProviderResilience}.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/{alpha/AlphaClient,alpha/AlphaProviderAdapter,beta/BetaClient,beta/BetaProviderAdapter,gamma/GammaClient,gamma/GammaProviderAdapter,gamma/GammaStreamReader,gamma/GammaOfferMapper}.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/{ProviderRestClientsTest,alpha/AlphaProviderAdapterIT,beta/BetaProviderAdapterIT,gamma/GammaProviderAdapterIT,gamma/GammaOfferMapperTest}.java`, `flight-aggregator/prompts/infrastructure/03-provider-adapter.md`, `mock-providers/docs/provider-contracts.md`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — D3 (Gamma) follow-up: lowercase currency codes
+
+**Intent:** Fix `domain-guardian`'s last MINOR finding on Gamma: the three adapters disagreed on a lowercase currency code.
+**Prompt (summary):** Human approved the reviewer's suggestion: normalise the code before the minor-units lookup, as `Price.of` does, and add a test with `"eur"`.
+**Generated:** `GammaOfferMapper.toOffer` strips and uppercases (`Locale.ROOT`) the currency once, and uses that value both for `minorUnitDigits` and for `Price.of`. New test `should_accept_lowercase_currency_code_like_alpha_and_beta_do`.
+**Human review / corrections:** The defect came from the previous follow-up: `minorUnitDigits` looked up the raw field before `Price.of` had normalised it, so `eur` was unmappable for Gamma but a valid EUR Offer for Alpha and Beta. With the normalisation removed temporarily, the new test failed; it was then restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 52 infrastructure unit tests, 35 ITs); `/check-arch` commands pass (ArchUnit 10/10). This closes D3 for all three providers. Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/provider/gamma/GammaOfferMapper.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/provider/gamma/GammaOfferMapperTest.java`.
+
+## 2026-11-14 — D4: Redis freshness adapter
+
+**Intent:** Implement `FreshnessPort` on Redis: freshness marker, aggregation lock with owner-checked release, and STALE detection, with degraded behaviour when Redis is down.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/04-cache-freshness.md`: `RedisFreshnessAdapter` on `StringRedisTemplate` with `fresh`, `lock` and `seen` keys; `SET NX` locks; compare-and-delete release through a Lua script; `markFresh` writes both keys; `lastResult` reads back the stored result; degraded fallback when Redis is unreachable; `CacheConfiguration` with `aggregation.*` TTLs; an IT with an owner check after expiry; a key-builder unit test.
+**Generated:**
+- `cache/RedisFreshnessAdapter`, `cache/FreshnessKeys` (package-private key builder), `config/CacheConfiguration`, `config/AggregationProperties` (record bound to `aggregation.*`, validates both TTLs positive), and `lock-ttl: ${LOCK_TTL:30s}` in `application.yaml`.
+- Awaitility as a test dependency (version managed by Spring Boot 4.1.2, 4.3.0).
+- Tests: `FreshnessKeysTest` (2) and `RedisFreshnessAdapterIT` (6): MISSING→FRESH→STALE after the freshness TTL; a lock granted once and again after release; a lock freed when its TTL expires; the owner check; `lastResult` still returning the outcomes after the freshness TTL has expired; degraded behaviour against a closed port.
+**Decisions:**
+- **`seen` holds the result JSON; `fresh` holds the marker `1`.** The prompt had the reverse. The phase-B prompt says a STALE response takes its `lastOutcomes` from `freshness.lastResult`, and by then `fresh` has expired. Holding the JSON in `fresh` would lose the outcomes exactly when they are needed. So `seen` (7 days) holds the JSON, and `fresh` only says "recently aggregated".
+- **STALE via `seen`**, as the prompt chose: the application did not change. `status`: `fresh` → FRESH; `lock` → REFRESHING; `seen` → STALE; otherwise MISSING. A lock is checked before `seen`, so a refresh already running on stale data reports REFRESHING.
+- **`markFresh` writes `seen` before `fresh`.** If the second write fails, the route stays STALE and the next search refreshes it. The other order would report FRESH with no stored outcomes.
+- **`LockToken` is the UUID alone.** The prompt wrote `new LockToken(criteria, uuid)`, but the domain record is `LockToken(String value)` (domain-model.md §8). `release` takes the criteria from its own signature, so the key is still derived correctly.
+- **The IT builds the connection by hand** (`LettuceConnectionFactory` on the container's mapped port), not via `@ServiceConnection`: nothing needs a Spring context for this adapter.
+**Human review / corrections:** The `DEL` mutation check was run because the compare-and-delete was the requirement that mattered most. With the Lua script replaced by a plain `DEL`, the owner test failed (`expected REFRESHING but was MISSING`): the expired owner removed the lock of the caller who had re-acquired it. The script was restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 54 infrastructure unit tests, 41 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Known limitations:** Redis outage is degraded, not failed: every search re-aggregates and nothing is shared between instances. This is written in the adapter's class comment; it goes into `SOLUTION.md` §6 with the next documentation pass. The `seen` key keeps a route's last result for 7 days, so a result can be served as STALE long after its TTL, which is what the phase-B STALE rule intends.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/cache/{RedisFreshnessAdapter,FreshnessKeys}.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/{CacheConfiguration,AggregationProperties}.java`, `flight-aggregator/infrastructure/src/main/resources/application.yaml`, `flight-aggregator/infrastructure/pom.xml`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/cache/{FreshnessKeysTest,RedisFreshnessAdapterIT}.java`, `flight-aggregator/prompts/infrastructure/04-cache-freshness.md`.
+
+## 2026-11-14 — D4 follow-up: fail closed on a Redis outage, corrupt seen values, seen TTL
+
+**Intent:** Fix the two MAJOR and one MINOR `domain-guardian` findings on D4. The MAJOR one was a real defect in the AI's design: during a Redis outage every concurrent search became the lock holder and aggregated synchronously, multiplying provider traffic by the request rate.
+**Prompt (summary):** Human approved the three recommendations:
+1. Fail closed: with Redis unreachable, `status` returns STALE, `tryLock` returns empty, `lastResult` is empty. An IT with 64 concurrent searches through the real `SearchItinerariesService` asserts zero aggregator calls. Document the outage in `SOLUTION.md` §6 and the adapter Javadoc.
+2. A corrupt `seen` value is discarded and the route reads MISSING, with no version field.
+3. The `seen` TTL is `max(7 days, 2 × freshness TTL)`, computed in `markFresh`.
+**Generated:**
+- `RedisFreshnessAdapter`: fail-closed branches; `lastResult` captures `JacksonException | IllegalArgumentException | DomainException`, logs `outcome=CORRUPT`, deletes the key; `seenTtl(freshnessTtl)`; the class Javadoc rewritten.
+- Tests (`RedisFreshnessAdapterIT`, now 11): the outage contract; the concurrent-search IT; two corrupt-value ITs (garbage JSON, a removed provider name); two `seen` TTL ITs (4-day and 10-minute freshness TTLs).
+- `docs/SOLUTION.md` §6: the outage bullet rewritten.
+**Decisions:**
+- **STALE when Redis is down, not MISSING.** MISSING would make the application aggregate synchronously, which is the herd we are removing. STALE with no lock serves the repository and schedules nothing, so the application needed no change. The cost: a route never aggregated before reads as STALE with an empty page, which is a claim of data that does not exist. This was accepted explicitly, and the SOLUTION bullet says it.
+- **Corrupt values are deleted, not kept.** A value that cannot be decoded is worse than none, because it makes every search for that route fail until the seen TTL. Deletion is not atomic with a concurrent `markFresh`; see the review question below.
+- **No version field** in the stored shape, as the human chose. A future incompatible change would be handled the same way as corruption: discard and re-aggregate.
+**Human review / corrections:** The MAJOR herd finding was correct, and it was the AI's own design. The degraded-mode prompt asked for "tryLock returns a token", and the AI followed it without checking the load it creates. Mutation checks: restoring the fail-open `tryLock` made the outage IT and the concurrent IT fail (the aggregator was called); removing the corrupt handling made both corrupt-value ITs fail. Both restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 54 infrastructure unit tests, 46 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapterIT.java`, `docs/SOLUTION.md`, `flight-aggregator/prompts/infrastructure/06-web-and-operations.md`.
+
+## 2026-11-14 — D4 follow-up: STALE contract in §8, compare-and-delete on discard
+
+**Intent:** Fix the two MINOR `domain-guardian` findings on D4 after the outage change.
+**Prompt (summary):** Human approved both: (1) document the fail-closed STALE in `domain-model.md` §8 and link it to `SOLUTION.md` §6; (2) discard a corrupt `seen` value only if it is still the corrupt one.
+**Generated:**
+- `domain-model.md` §8: one paragraph after the Freshness table stating that an unavailable store reports STALE, tryLock is empty, nothing is aggregated, and a never-aggregated route returns an empty page. It is marked as a deliberate exception and linked to `SOLUTION.md` §6.
+- `RedisFreshnessAdapter.discard(key, corruptJson)` runs a compare-and-delete Lua script (`DISCARD_IF_UNCHANGED`) instead of an unconditional `DEL`.
+- IT `should_keep_valid_result_written_after_corrupt_value_was_read`: a template hook writes a valid result between the read of the corrupt value and the discard; the valid result must survive.
+**Decisions:** the compare-and-delete reuses the pattern already used for releasing the lock, so there is one idiom for "change only what I still own" in the adapter.
+**Human review / corrections:** Both findings were correct. The discard race was a window of milliseconds, but the loss was silent, and it caused an unnecessary synchronous re-aggregation. Mutation check: with the unconditional `DEL` restored, the new IT failed; the Lua version was then restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 54 infrastructure unit tests, 47 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Artifacts:** `flight-aggregator/docs/domain-model.md`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapterIT.java`.
+
+## 2026-11-14 — D5: Web API (search, admin aggregation, cursor codec, Problem Details)
+
+**Intent:** Expose the search and admin aggregation over HTTP, with request validation, an opaque keyset cursor, RFC 9457 Problem Details, and light OpenAPI docs, keeping controllers dependent only on inbound ports.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/05-web-api.md`: `GET /api/itineraries` and `POST /api/admin/aggregations`; a validated request record; response DTOs; `CursorCodec`; `ItineraryResponseMapper`; two controllers; `ApiExceptionHandler` (400/422/500); springdoc annotations; `@WebMvcTest` tests, a codec test, an aggregation controller test.
+**Generated:**
+- `web/`: `ItineraryController`, `AggregationController`, `ItinerariesApi`, `AggregationsApi`, `ItinerarySearchRequest`, `AggregationRequest`, `SearchRequestMapper`, `CursorCodec`, `InvalidCursorException`, `ApiExceptionHandler`; `web/dto/` (6 records); `web/mapper/ItineraryResponseMapper`.
+- `config/WebConfiguration` (the `SearchRequestMapper` bean); `config/AggregationProperties.referenceCurrency` and `reference-currency: ${REFERENCE_CURRENCY:EUR}` in `application.yaml`.
+- Tests: `ItineraryControllerTest` (11), `AggregationControllerTest` (2), `CursorCodecTest` (9), all with AssertJ (`MockMvcTester`), no Hamcrest.
+**Decisions:**
+- **Lowercase codes are accepted and normalised** (the prompt asked to decide): validation is `[A-Za-z]{3}` / `[A-Za-z0-9]{2}`, and `Airport.of` / `Carrier.of` uppercase. `origin=mad` means MAD; `origin=MADX` is 400.
+- **OpenAPI annotations live on interfaces (`ItinerariesApi`, `AggregationsApi`) that the controllers implement.** ArchUnit rule 5 allows controllers to depend only on inbound ports, the domain model, `web`, Spring, `jakarta.validation` and `java`; `io.swagger` is not in that list. Verified: `@Operation` placed directly on the controller made rule 5 fail.
+- **The cursor is `<amount>|<currency>|<itineraryKey>`**, not `<price>|<id>`: `PageCursor` holds a full `Price` (D2's currency check needs it), and pages are ordered by the Itinerary Key, not a database id. The cursor is opaque but not signed; a crafted one can only move its own caller within the results.
+- **`maxPrice` is in a new `aggregation.reference-currency`** (default EUR). Nothing configured a currency before; `OfferValidator` takes one in its constructor, so the same property will configure it when the use cases are wired.
+- **The admin endpoint answers 200 with the result**, not 202 (the prompt left it open; 200 is simpler for the demo).
+- **422 for `DomainException`, 400 for request shape.** Origin equal to destination passes validation (two valid codes) and is rejected by `SearchCriteria`, so it is 422.
+- **500 hides the exception:** the body has a `correlationId` and a generic detail; the exception and id are logged.
+- **Type-conversion errors read "has an invalid value"** instead of Spring's conversion message, which exposes Java type names.
+**Human review / corrections:** None yet. One compile error in the AI's test (`getContentAsString` declares `UnsupportedEncodingException`), fixed. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 76 infrastructure unit tests, 47 ITs); `/check-arch` commands pass (ArchUnit 10/10; rules 4 and 5 included).
+**Known gaps:**
+- **The application does not start yet:** no configuration wires `SearchItinerariesService` / `AggregateFlightsService` (and `OfferValidator`, `ItineraryFactory`, `MarkupPolicy`). The web tests are slices with mocked use cases.
+- **OpenAPI is not verified at runtime** for the same reason: springdoc is not part of the `@WebMvcTest` slice, and the full context cannot start.
+- **The admin endpoint calls `AggregateFlightsUseCase` directly:** it neither takes the aggregation lock nor marks the route fresh. Sent to `domain-guardian` as a question.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/web/**`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/{WebConfiguration,AggregationProperties}.java`, `flight-aggregator/infrastructure/src/main/resources/application.yaml`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/web/**`, `flight-aggregator/prompts/infrastructure/05-web-api.md`.
+
+## 2026-11-14 — D5 follow-up: on-demand refresh use case, domain errors as 500, foreign-currency cursor
+
+**Intent:** Fix the MAJOR and two MINOR `domain-guardian` findings on D5. The MAJOR one was that the admin endpoint aggregated without the lock and without marking the route fresh, so a manual refresh was repeated by the next search.
+**Prompt (summary):** Human approved the AI's recommendations:
+1. A new inbound use case `RefreshItinerariesUseCase` (`Optional<AggregationResult> refresh(SearchCriteria)`), in `domain-model.md` §8 first, implemented as tryLock → aggregate → markFresh if any provider succeeded → release in a `finally`; the admin controller answers 409 when it is empty; the Redis-down consequence goes into `SOLUTION.md` §6.
+2. Wrap `DomainException` only while mapping the request (search and admin body), as a web `InvalidRequestException` → 422; any other `DomainException` → 500 with a correlation id and no domain message.
+3. Reject a cursor in another currency with 400.
+4. Keep the JSON field name `providers`.
+**Generated:**
+- `domain-model.md` §8: `RefreshItinerariesUseCase` and a paragraph on its lock and freshness rules.
+- `domain/port/in/RefreshItinerariesUseCase`; `application/RefreshItinerariesService` with `RefreshItinerariesServiceTest` (5).
+- `web/`: `InvalidRequestException` (422), `AggregationInProgressException` (409). `SearchRequestMapper` wraps domain failures in `criteria` and `filter`, and checks the cursor currency. `AggregationController` uses `RefreshItinerariesUseCase`. `ApiExceptionHandler` drops the blanket `DomainException` handler and adds 422 and 409 handlers. `AggregationsApi` documents 409 and 422.
+- Tests:
+  - `ItineraryControllerTest`: the old "use case throws DomainException → 422" test is replaced by "port throws `InvalidItineraryException` → 500 without the domain message", because the human changed the rule; a USD cursor test is added.
+  - `AggregationControllerTest`: a 409 test and a 422 body test are added.
+- `docs/SOLUTION.md` §6: with Redis down, a manual refresh also answers 409.
+**Decisions:**
+- An aggregation exception in `refresh` propagates after the lock is released; the search path swallows it to keep serving data. An operator who asked for a refresh should see that it failed, as a 500 with a correlation id.
+- `Optional` is used only as a return type, within AGENTS.md §6.
+**Human review / corrections:** The MAJOR finding came from the AI's D5 design: the prompt said "inject only `AggregateFlightsUseCase`", and the AI followed it without checking the lock and freshness rules in §8. The human approved adding a domain port to fix it. Mutation checks: with a blanket `DomainException → 422` handler restored temporarily, the new 500 test failed; without the cursor currency check, the USD cursor test failed. Both restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 41 application, 79 infrastructure unit tests, 47 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Artifacts:** `flight-aggregator/docs/domain-model.md`, `flight-aggregator/domain/src/main/java/io/github/jerojasol/flights/domain/port/in/RefreshItinerariesUseCase.java`, `flight-aggregator/application/src/main/java/io/github/jerojasol/flights/application/RefreshItinerariesService.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/RefreshItinerariesServiceTest.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/web/{InvalidRequestException,AggregationInProgressException,SearchRequestMapper,AggregationController,AggregationsApi,ApiExceptionHandler}.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/web/{ItineraryControllerTest,AggregationControllerTest}.java`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — D6: wiring, startup checks, scheduler, health, Dockerfile
+
+**Intent:** Make the service start: wire domain and application explicitly, add scheduled ingestion and health, build the container, and prove the whole service with one smoke test, including a Redis outage.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/06-wiring-and-boot.md`, as written by the human, plus 12 gaps the AI found by checking the prompt against the code and the D5 review notes, appended to the prompt before execution with the human's instruction to do so.
+**Gaps added to the prompt:**
+1. Lettuce's 60 s default command timeout.
+2. Hikari's 30 s default startup wait.
+3. `providers.timeout` must be shorter than the fan-out budget.
+4. The refresh executor needs a bounded queue, not only bounded threads.
+5. One `Clock` and one set of TTLs.
+6. Exactly one adapter per Provider, failing fast if one is missing.
+7. Scheduler details: `@EnableScheduling`, per-route catch, UTC dates, route validation, disabled in tests.
+8. `warmIntervalMinutes` vs a Duration.
+9. The outcome logger as a decorator.
+10. Health groups and details.
+11. ArchUnit rule 7 for the breaker health indicators.
+12. Graceful shutdown.
+
+Also flagged: there is no root `docker-compose.yml`, which `../AGENTS.md` requires; it is out of scope for this project.
+**Generated:**
+- `config/UseCaseConfiguration`, `config/SchedulingConfiguration`; `config/AggregationProperties` rewritten with every startup check; `config/ProviderConfiguration` (concrete adapter types, one health indicator per provider); `config/CacheConfiguration` (Lettuce rejects commands while disconnected).
+- `observability/ProviderOutcomeLogger`, `scheduling/WarmRoutesScheduler`, `provider/ProviderCircuitState`, `provider/ProviderCircuitHealthIndicator`; adapters and `ProviderResilience` expose `circuitState()`.
+- `application.yaml` (aggregation properties, timeouts, actuator exposure and groups, graceful shutdown, logging) and `application-test.yaml` (no warm routes).
+- `Dockerfile` and `.dockerignore`.
+- Tests: `AggregationPropertiesTest` (6), `WarmRoutesSchedulerTest` (3), `FlightAggregatorApplicationIT`.
+- `docs/SOLUTION.md` §6: no refresh path at all during a Redis outage; no authentication covers the admin endpoint and actuator.
+**Decisions:**
+- **Lettuce rejects commands while disconnected** (`DisconnectedBehavior.REJECT_COMMANDS`). Found while writing the smoke test: by default Lettuce queues commands during a disconnect and each waits for the command timeout, so a search with Redis down would have taken about 1.5 s of Redis waits even with a 500 ms timeout. It now fails at once and the adapter degrades immediately.
+- **The outcome logger is a decorator** of `AggregateFlightsUseCase`, so every path (cold miss, background refresh, admin refresh, scheduler) is logged once and `application` stays free of logging.
+- **Provider health is always UP**, with `circuit` and `degraded` details, so overall health never goes DOWN because a provider is down.
+- **The scheduler uses `RefreshItinerariesUseCase`**: same lock as searches and admin refreshes, so it never races them.
+- **Plain jar in the image**, not layered extraction, which was not needed for this delivery.
+**Human review / corrections:** The human asked the AI to look for wiring gaps, add them to the prompt and execute it. AI errors during execution:
+- `spring.datasource.hikari.connection-timeout: 5s` failed binding; Hikari binds a `long` in milliseconds. Fixed to `5000`.
+- The Lettuce queuing behaviour was not in the AI's first list of gaps; the smoke test's timing assertion made it visible.
+
+Verified:
+- `./mvnw verify` passes (223 domain, 41 application, 88 infrastructure unit tests, 48 ITs); `/check-arch` passes (ArchUnit 10/10).
+- Smoke IT story: cold search FRESH with 3 deduplicated itineraries from 3 providers; Redis stopped → liveness UP, `/actuator/health` 503, search 200 STALE in under 2 s, admin refresh 409 with no provider call.
+- `docker build -t flight-aggregator .` succeeds; without Postgres the container fails in 5 s with "Connection to 127.0.0.1:1 refused", running as uid 10001.
+
+Not committed.
+**Known gaps:** no root `docker-compose.yml` (repository-level step); no authentication on admin and actuator; the aggregation-under-lock sequence still exists in three places (D5 MINOR, deferred).
+**Artifacts:** `flight-aggregator/prompts/infrastructure/06-wiring-and-boot.md`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/{config,observability,scheduling,provider}/**`, `flight-aggregator/infrastructure/src/main/resources/application.yaml`, `flight-aggregator/infrastructure/src/test/resources/application-test.yaml`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/{FlightAggregatorApplicationIT,config/AggregationPropertiesTest,scheduling/WarmRoutesSchedulerTest}.java`, `flight-aggregator/Dockerfile`, `flight-aggregator/.dockerignore`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — D7: end-to-end test (closes Phase D)
+
+**Intent:** One integration test that reads like documentation of the whole system: aggregation, deduplication, markup, keyset paging, filtering, a provider failure during a background refresh, cheapest-wins across runs, and a manual refresh.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/07-end-to-end.md`: `EndToEndIT` with `@SpringBootTest(RANDOM_PORT)`, test profile, Postgres and Redis containers, one WireMock for the three providers, and six steps in one `@Test`, under ~30 s.
+**Generated:**
+- `EndToEndIT` (one test, 6 commented steps, helpers grouped as Steps / HTTP / Providers / JSON) using Spring's `RestTestClient` and AssertJ.
+- A test-only fixture `fixtures/beta/overlap-plus-beta-only.xml`: Beta's exported two itineraries plus IB6251, sold by Beta only.
+**Decisions:**
+- **A Beta-only itinerary was added.** The exported `two-itineraries.*` fixtures carry the same two itineraries for all three providers, so step 4's "Beta-only itineraries still present" could not be asserted with them. The new fixture keeps the overlap (7 offers → 3 itineraries) and adds one itinerary only Beta sells. The exported fixtures were not changed.
+- **Freshness is expired by deleting the `fresh:*` key**, not by a 2 s TTL. D6's startup checks require `freshness-ttl > lock-ttl ≥ 2 × provider-budget` (7 s at least), so the prompt's first option is rejected at boot; the prompt's alternative was used.
+- **Expected values are written out** (377.09, 544.95, 1471.07; GAMMA, BETA, GAMMA), not computed, so the test documents the outcome. The markup is still checked as `final = base × 1.05` (HALF_EVEN) for every item.
+- **Step 5 forces the refresh through the stale path** (delete the marker, search, wait for FRESH), so step 6 is the only manual refresh. Step 6 asserts `persisted = 0`: nothing cheaper arrived, so the upsert rewrote nothing.
+**Human review / corrections:** None yet. The test passed on the first run, so a vacuous pass was ruled out by what it asserts:
+- step 4's provider statuses (BETA ERROR, ALPHA and GAMMA OK) prove the background refresh ran;
+- step 5's change of source to ALPHA at 315.00 can only come from a refresh;
+- step 6's `persisted = 0` fails if the upsert rewrote rows unconditionally.
+
+Verified: `EndToEndIT` passed 3 runs in a row, about 10 s each; `./mvnw verify` passes (223 domain, 41 application, 88 infrastructure unit tests, 49 ITs). Not committed.
+**Phase D status:** closed. Still open at repository level: no root `docker-compose.yml`. Two startup checks were left for the human to decide (D6 notes: retry vs fan-out budget; warm interval vs freshness TTL). The aggregation-under-lock sequence is duplicated in three places (D5 MINOR, deferred).
+**Artifacts:** `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/EndToEndIT.java`, `flight-aggregator/infrastructure/src/test/resources/fixtures/beta/overlap-plus-beta-only.xml`, `flight-aggregator/prompts/infrastructure/07-end-to-end.md`.
+
+## 2026-11-14 — Phase D accepted: retry vs budget documented, warm-interval check, lock-sequence debt recorded
+
+**Intent:** Close the three items left open after D7, as the human decided.
+**Prompt (summary):** The human accepted Phase D, including the two D7 deviations, and decided:
+1. Retry vs fan-out budget: no validation and no change to defaults. Document it in `SOLUTION.md` §6, and add "budget-aware retry" to §7.
+2. Add a startup check that `warm-interval ≥ freshness-ttl`, with a test.
+3. Do not refactor the aggregation-under-lock sequence; record it in §7 as technical debt.
+**Generated:**
+- `docs/SOLUTION.md` §6: a retry started late is abandoned by the fan-out; the provider is reported as TIMEOUT rather than ERROR; the abandoned retry still calls it; its offers arrive with the next refresh; data stays correct.
+- `docs/SOLUTION.md` §7 (first entries under the template line): "Budget-aware retry", and the known technical debt that the lock sequence is written three times, with why the copies differ.
+- `AggregationProperties`: `warm-interval ≥ freshness-ttl`, with a clear message.
+- `AggregationPropertiesTest`: 3 new tests (shorter interval with routes fails; equal is accepted; no routes, not checked).
+**Decisions:** **The interval check applies only when `warm-routes` is set.** With the scheduler disabled the interval is unused; checking it anyway would make startup fail when someone raises `FRESHNESS_TTL` without touching `WARM_INTERVAL`, with nothing actually wrong. This narrows the human's instruction slightly and is reported for confirmation.
+**Human review / corrections:** All three outcomes decided by the human. Mutation check: with the new check removed temporarily, the "shorter interval with routes" test failed; it was then restored. Verified: `./mvnw verify` passes (223 domain, 41 application, 91 infrastructure unit tests, 49 ITs). Not committed, per the human's instruction.
+**Artifacts:** `docs/SOLUTION.md`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/AggregationProperties.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/config/AggregationPropertiesTest.java`.

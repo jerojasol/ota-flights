@@ -55,7 +55,12 @@ public final class ItineraryKey {
         return new ItineraryKey(sha256Hex(canonical(segments)));
     }
 
-    /** Rebuilds a key read from storage. Does NOT validate the format; for the persistence adapter only. */
+    /**
+     * Rebuilds a key read from storage; for the persistence adapter only. The value is still checked as a
+     * SHA-256 hex digest ({@code [0-9a-f]{64}}) and a malformed one throws {@link InvalidItineraryKeyException}.
+     * What is trusted, not re-derived, is that the key was computed from the itinerary's segments (the I12
+     * rehydration exception).
+     */
     public static ItineraryKey fromStored(String value) {
         return new ItineraryKey(value);
     }

@@ -42,10 +42,6 @@ public final class Itinerary {
                 winning.provider(), ingestedAt);
     }
 
-    public static Itinerary from(Offer winning, MarkupPolicy markup) {
-        return from(winning, markup, Instant.now());
-    }
-
     /**
      * Rebuilds an Itinerary read from storage. Structure (I1–I9) and currency (I11) are still checked, but the
      * stored key and prices are trusted: the markup percentage in force when the row was written may differ from

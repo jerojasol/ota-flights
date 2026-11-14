@@ -6,9 +6,9 @@ Run the tests for the `$1` layer of `flight-aggregator` and summarise the result
 
 Mapping:
 - `domain` → `./mvnw -q -pl domain test`
-- `application` → `./mvnw -q -pl application test`
-- `infrastructure` → `./mvnw -q -pl infrastructure test` (unit + slices, no Docker)
-- `it` → `./mvnw -q -pl infrastructure verify` (integration tests, needs Docker)
+- `application` → `./mvnw -q -pl application -am test`
+- `infrastructure` → `./mvnw -q -pl infrastructure -am test` (unit + slices, no Docker)
+- `it` → `./mvnw -q -pl infrastructure -am verify` (integration tests, needs Docker)
 - `all` → `./mvnw -q verify`
 
 Use the shell tool to run the matching command. Then:

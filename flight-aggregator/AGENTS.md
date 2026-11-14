@@ -109,9 +109,10 @@ Do **not** use: `Flight` (ambiguous — say Segment or Itinerary), `Trip`, `Jour
 ## 8. Commands
 
 ```bash
-./mvnw clean verify                              # build and test everything
+./mvnw verify                                    # unit + integration (needs Docker)
+./mvnw verify -DskipITs                          # unit only
+./mvnw verify -Pperf                             # perf-tagged ITs only
 ./mvnw -pl domain test                           # domain tests only (fast)
-./mvnw -pl infrastructure verify -Pintegration   # integration tests (needs Docker)
 ./mvnw -pl infrastructure spring-boot:run        # run locally (expects Postgres/Redis/providers reachable)
 ```
 

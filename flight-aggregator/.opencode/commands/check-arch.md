@@ -5,7 +5,7 @@ description: Run ArchUnit and the domain-guardian review on flight-aggregator
 Architecture check for `flight-aggregator`.
 
 ArchUnit result:
-!`./mvnw -q -pl infrastructure test -Dtest=ArchitectureTest -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tail -40`
+!`./mvnw -q -pl infrastructure -am test -Dtest=ArchitectureTest -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tail -40`
 
 Domain and application unit tests:
 !`./mvnw -q -pl domain,application test 2>&1 | tail -20`

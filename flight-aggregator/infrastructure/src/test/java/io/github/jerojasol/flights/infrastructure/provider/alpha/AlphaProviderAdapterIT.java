@@ -18,6 +18,7 @@ import io.github.jerojasol.flights.domain.model.ProviderStatus;
 import io.github.jerojasol.flights.domain.model.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderContractViolation;
+import io.github.jerojasol.flights.infrastructure.provider.ProviderRequestRejected;
 import io.github.jerojasol.flights.infrastructure.provider.ResilienceSettings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -83,7 +84,13 @@ class AlphaProviderAdapterIT {
     }
 
     @Test
-    void should_report_error_with_alpha_body_when_alpha_answers_400() {
+    void should_report_error_after_one_request_without_touching_the_breaker_with_alpha_body_when_alpha_answers_400() {
+        // A 500 first, so the breaker has recorded failures and the counter is known to work.
+        alpha.stubFor(get(urlPathEqualTo("/alpha/flights")).willReturn(aResponse().withStatus(500)));
+        fetchFailure();
+        int recordedFailures = adapter.circuitFailedCalls();
+        assertThat(recordedFailures).isEqualTo(2);
+        alpha.resetAll();
         alpha.stubFor(get(urlPathEqualTo("/alpha/flights")).willReturn(aResponse().withStatus(400)
                 .withHeader("Content-Type", "application/json")
                 .withBody("{ \"error\": \"BAD_REQUEST\", \"message\": \"Parameter 'from' must be a 3-letter IATA code\" }")));
@@ -91,7 +98,10 @@ class AlphaProviderAdapterIT {
         ProviderUnavailableException failure = fetchFailure();
 
         assertThat(failure.status()).isEqualTo(ProviderStatus.ERROR);
-        assertThat(failure.getCause()).hasMessageContaining("HTTP 400").hasMessageContaining("BAD_REQUEST");
+        assertThat(failure.getCause()).isInstanceOf(ProviderRequestRejected.class)
+                .hasMessageContaining("HTTP 400").hasMessageContaining("BAD_REQUEST");
+        alpha.verify(1, getRequestedFor(urlPathEqualTo("/alpha/flights")));
+        assertThat(adapter.circuitFailedCalls()).isEqualTo(recordedFailures);
     }
 
     @Test

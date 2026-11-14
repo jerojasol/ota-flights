@@ -1,8 +1,6 @@
 package io.github.jerojasol.flights.infrastructure.provider.beta;
 
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
-import io.github.jerojasol.flights.domain.model.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderRestClients;
 import org.springframework.http.MediaType;
@@ -31,9 +29,8 @@ final class BetaClient {
                 .exchange((request, response) -> {
                     byte[] bytes = response.getBody().readAllBytes();
                     if (response.getStatusCode().isError()) {
-                        throw new ProviderUnavailableException(Provider.BETA, ProviderStatus.ERROR,
-                                new IllegalStateException("Beta answered HTTP " + response.getStatusCode().value()
-                                        + ": " + new String(bytes, StandardCharsets.UTF_8)));
+                        throw ProviderRestClients.httpError(Provider.BETA, response.getStatusCode().value(),
+                                new String(bytes, StandardCharsets.UTF_8));
                     }
                     return bytes;
                 });

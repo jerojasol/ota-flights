@@ -30,7 +30,9 @@ import java.util.function.Supplier;
  *   <li>the breaker is open → {@code CIRCUIT_OPEN} (the provider is not called, never retried);</li>
  *   <li>a 2xx body that breaks the contract ({@link ProviderContractViolation}) → {@code ERROR}, not retried, but
  *       recorded by the breaker;</li>
- *   <li>anything else (HTTP error status, connection failure, truncated stream) → {@code ERROR}, retried.</li>
+ *   <li>a 4xx other than 408/429 ({@link ProviderRequestRejected}) → {@code ERROR}, not retried and ignored by the
+ *       breaker: the provider is healthy, our request was wrong;</li>
+ *   <li>anything else (5xx, 408, 429, connection failure, truncated stream) → {@code ERROR}, retried.</li>
  * </ul>
  * Each provider gets its own instance, so one provider's breaker never affects another.
  */
@@ -56,6 +58,7 @@ public final class ProviderResilience {
                 .minimumNumberOfCalls(settings.slidingWindowSize())
                 .failureRateThreshold(settings.failureRatePercent())
                 .waitDurationInOpenState(settings.openStateWait())
+                .ignoreException(ProviderResilience::isRequestRejected)
                 .build());
         this.retry = Retry.of(name, RetryConfig.custom()
                 .maxAttempts(settings.maxAttempts())
@@ -64,11 +67,23 @@ public final class ProviderResilience {
                 .build());
     }
 
-    /** Only transport-level ERRORs are retried; a contract breach would fail the same way again. */
+    /** Only transport-level ERRORs are retried; a contract breach or a rejected request would fail the same way. */
     private static boolean isRetryable(Throwable failure) {
         return failure instanceof ProviderUnavailableException unavailable
                 && unavailable.status() == ProviderStatus.ERROR
-                && !(unavailable.getCause() instanceof ProviderContractViolation);
+                && !(unavailable.getCause() instanceof ProviderContractViolation)
+                && !(unavailable.getCause() instanceof ProviderRequestRejected);
+    }
+
+    /** The provider is healthy when it rejects our request, so the breaker must not count it. */
+    private static boolean isRequestRejected(Throwable failure) {
+        return failure instanceof ProviderUnavailableException unavailable
+                && unavailable.getCause() instanceof ProviderRequestRejected;
+    }
+
+    /** Failed calls currently recorded by this provider's circuit breaker. */
+    public int failedCalls() {
+        return circuitBreaker.getMetrics().getNumberOfFailedCalls();
     }
 
     public <T> T call(Supplier<T> attempt) {

@@ -1,8 +1,6 @@
 package io.github.jerojasol.flights.infrastructure.provider.alpha;
 
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
-import io.github.jerojasol.flights.domain.model.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderRestClients;
 import org.springframework.http.MediaType;
@@ -32,9 +30,8 @@ final class AlphaClient {
                 .exchange((request, response) -> {
                     byte[] bytes = response.getBody().readAllBytes();
                     if (response.getStatusCode().isError()) {
-                        throw new ProviderUnavailableException(Provider.ALPHA, ProviderStatus.ERROR,
-                                new IllegalStateException("Alpha answered HTTP " + response.getStatusCode().value()
-                                        + ": " + new String(bytes, StandardCharsets.UTF_8)));
+                        throw ProviderRestClients.httpError(Provider.ALPHA, response.getStatusCode().value(),
+                                new String(bytes, StandardCharsets.UTF_8));
                     }
                     return bytes;
                 });

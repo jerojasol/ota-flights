@@ -39,4 +39,9 @@ public final class AlphaProviderAdapter implements FlightProviderPort {
                 response.offers().size(), response.unmappable());
         return response;
     }
+
+    /** Failed calls recorded by this adapter's circuit breaker; for tests in this package. */
+    int circuitFailedCalls() {
+        return resilience.failedCalls();
+    }
 }

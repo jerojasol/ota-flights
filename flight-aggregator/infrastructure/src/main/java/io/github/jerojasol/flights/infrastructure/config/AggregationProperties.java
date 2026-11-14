@@ -50,6 +50,11 @@ public record AggregationProperties(BigDecimal markupPercentage, Currency refere
             require(ROUTE.matcher(route).matches(),
                     "aggregation.warm-routes entry '" + route + "' must look like MAD-JFK");
         }
+        // Refreshing more often than data goes stale only calls the providers for nothing. Checked only when the
+        // scheduler runs: with no warm routes the interval is unused.
+        require(warmRoutes.isEmpty() || warmInterval.compareTo(freshnessTtl) >= 0,
+                "aggregation.warm-interval (" + warmInterval + ") must be at least aggregation.freshness-ttl ("
+                        + freshnessTtl + ") when aggregation.warm-routes is set");
     }
 
     private static void requirePositive(Duration value, String name) {

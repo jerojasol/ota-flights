@@ -53,6 +53,27 @@ class AggregationPropertiesTest {
     }
 
     @Test
+    void should_fail_when_warm_interval_is_shorter_than_freshness_ttl_and_routes_are_set() {
+        assertThatThrownBy(() -> new AggregationProperties(new BigDecimal("5"), EUR, Duration.ofMinutes(10),
+                Duration.ofSeconds(30), Duration.ofSeconds(3), List.of("MAD-JFK"), Duration.ofMinutes(5)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("aggregation.warm-interval").hasMessageContaining("freshness-ttl");
+    }
+
+    @Test
+    void should_accept_warm_interval_equal_to_freshness_ttl() {
+        assertThat(new AggregationProperties(new BigDecimal("5"), EUR, Duration.ofMinutes(10), Duration.ofSeconds(30),
+                Duration.ofSeconds(3), List.of("MAD-JFK"), Duration.ofMinutes(10)).warmInterval())
+                .isEqualTo(Duration.ofMinutes(10));
+    }
+
+    @Test
+    void should_not_check_warm_interval_when_no_routes_are_set() {
+        assertThat(new AggregationProperties(new BigDecimal("5"), EUR, Duration.ofMinutes(10), Duration.ofSeconds(30),
+                Duration.ofSeconds(3), List.of(), Duration.ofMinutes(5)).warmRoutes()).isEmpty();
+    }
+
+    @Test
     void should_treat_missing_warm_routes_as_none() {
         assertThat(properties(Duration.ofMinutes(10), Duration.ofSeconds(30), Duration.ofSeconds(3), null).warmRoutes())
                 .isEmpty();

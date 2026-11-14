@@ -152,6 +152,10 @@ Conventions:
 - `Leg/@sequence` is 1-based and legs may arrive **out of order** in the document; always sort by `sequence`.
 - Empty result: `<Itineraries count="0"/>`.
 - Namespace `urn:beta-gds:search:v2` is present on the root element.
+- Daylight saving (how the consumer resolves `LocalDateTime` + `TimeZone`):
+  - A local time inside a spring-forward gap does not exist in that zone. The consumer treats the itinerary as malformed and drops it (counted per provider).
+  - A local time inside the autumn overlap happens twice. The consumer uses the **earlier** offset.
+  - Limitation: a local time without an offset is ambiguous during the overlap. A departure in the repeated hour may be mapped one hour early; it then gets a different departure instant from the same flight sent by Alpha or Gamma (which send UTC), and will not deduplicate against them.
 
 **Response `400`**
 

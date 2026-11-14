@@ -45,7 +45,7 @@ ProviderStatus (Enum)  — OK, TIMEOUT, ERROR, CIRCUIT_OPEN
 
 ### Why `Itinerary` is the aggregate root
 
-The consistency boundary is the whole journey: validity depends on the relationship between segments, and price belongs to the journey, not to individual segments. Segments are never addressed independently, so they are Value Objects inside the aggregate.
+The consistency boundary is the whole Itinerary: validity depends on the relationship between segments, and price belongs to the Itinerary, not to individual segments. Segments are never addressed independently, so they are Value Objects inside the aggregate.
 
 ### Why `Offer` and `Itinerary` are different types
 
@@ -62,7 +62,7 @@ Each invariant must be enforced in the constructor/factory of the owning type an
 - C1. Code is exactly 2 uppercase ASCII alphanumerics.
 
 ### FlightNumber
-- F1. Composed of a valid Carrier code followed by 1 to 4 digits.
+- F1. Composed of a valid Carrier code followed by a number from 1 to 9999, written with 1 to 4 digits; leading zeros are not significant (`IB117` and `IB0117` are the same flight number).
 
 ### Price
 - P1. Amount is non-negative.
@@ -90,6 +90,14 @@ Each invariant must be enforced in the constructor/factory of the owning type an
 - I12. `key` is derived from segments; it is never supplied externally.
 
 A violation of S1–S3 or I1–I9 does not throw inside the aggregation pipeline: the Offer is **rejected** with a typed reason (see section 6). Direct construction of an invalid `Itinerary` or `Segment` outside the pipeline throws `InvalidItineraryException` / `InvalidSegmentException`.
+
+Exceptions: every type throws its own unchecked `DomainException` subtype: `InvalidAirportException` (A1), `InvalidCarrierException` (C1), `InvalidFlightNumberException` (F1), `InvalidPriceException` (P1–P4, including cross-currency arithmetic), `InvalidSegmentException` (S1–S3), `InvalidOfferException` (null provider/price, null or empty segments), `InvalidItineraryKeyException` (empty segments, malformed stored key), `InvalidItineraryException` (I1–I12), `InvalidSearchException` (search criteria, filter, cursor, page and search result), `InvalidAggregationException` (provider outcome, aggregation result, unavailable-provider status).
+
+### Rehydration
+
+`Itinerary.rehydrate(key, segments, basePrice, finalPrice, provider, ingestedAt)` exists only for the persistence adapter. It re-checks structure (I1–I9) and currency (I11) but **trusts the stored key and prices**: I10 and I12 are guaranteed by `Itinerary.from` when the row is written, and re-deriving on read would silently reprice history if the markup percentage changed. This is the one deliberate exception to I10/I12.
+
+`MAX_SEGMENTS` (4), `MIN_CONNECTION` (45 min), `MAX_CONNECTION` (24 h) and `MAX_TOTAL_DURATION` (72 h) are constants on `Itinerary`.
 
 ## 4. Itinerary Key (deduplication identity)
 
@@ -125,7 +133,7 @@ Given a collection of valid Offers:
 3. Tie-break: deterministic by `Provider` enum order (ALPHA < BETA < GAMMA) so results are reproducible.
 4. Record which provider supplied the winning price (`Itinerary.source`).
 
-Complexity requirement: O(n) in the number of offers (hash-based grouping). No pairwise comparison.
+Complexity requirement: grouping is O(n) in the number of offers (hash-based), with no pairwise comparison. The output is the k distinct survivors sorted by key string (O(k log k)), so it is reproducible. Same provider and price: the earlier final arrival wins. All offers are assumed to share one currency (§10).
 
 ## 6. Validation outcomes
 
@@ -152,17 +160,26 @@ enum RejectionReason
 
 Rejected offers are counted and reported per provider in the aggregation result; they are not persisted.
 
+Which component raises which reason:
+- `OfferValidator` raises TOO_MANY_SEGMENTS, ORIGIN_EQUALS_DESTINATION, AIRPORT_MISMATCH_AT_CONNECTION, CONNECTION_OVERLAP, CONNECTION_TOO_SHORT, CONNECTION_TOO_LONG and TOTAL_DURATION_EXCEEDED.
+- NO_SEGMENTS is never raised by the validator, because `Offer` rejects empty lists; it only surfaces as `InvalidItineraryException` from `Itinerary.rehydrate`.
+- DEAD_LEG_SAME_AIRPORT, DEAD_LEG_NON_POSITIVE_DURATION and SEGMENT_DURATION_EXCEEDED are enforced by the `Segment` constructor, so an `Offer` can never hold such a segment. An adapter that fails to build a `Segment` reads `InvalidSegmentException.reason()` and counts the offer under that reason.
+- Order of checks (first failure wins, one shared implementation in `Itinerary`): I1, I2, I4, then for each consecutive pair in segment order I5, I6, I7, I8, and finally I9.
+- `OfferValidator.validateAll` returns a `ValidationSummary(valid, rejectedByReason)`.
+
 ## 7. Domain Services
 
 | Service | Responsibility | Inputs → Outputs |
 |---|---|---|
-| `OfferValidator` | Apply S1–S3, I1–I9 to an Offer | `Offer → OfferValidation` |
+| `OfferValidator` | Apply I2, I4–I9 to an Offer (S1–S3 are enforced by `Segment`, I1 by `Offer`) | `Offer → OfferValidation` |
 | `ItineraryDeduplicator` | Apply DeduplicationPolicy | `Collection<Offer> → Collection<Offer>` (one per key) |
-| `ItineraryFactory` | Build an `Itinerary` from a winning Offer + MarkupPolicy | `(Offer, MarkupPolicy) → Itinerary` |
+| `ItineraryFactory` | Build an `Itinerary` from a winning Offer + MarkupPolicy | `(Offer) → Itinerary` (holds the `MarkupPolicy` and a `Clock` for `ingestedAt`; `Itinerary.from(Offer, MarkupPolicy, Instant)` is the underlying factory) |
 
 All three are stateless, framework-free, and composed by the application-layer `AggregateFlightsService`.
 
 ## 8. Ports
+
+All types below live in `domain.model` except the ports (`domain.port.in`, `domain.port.out`). Ports are plain interfaces over domain types.
 
 ### Inbound (use cases, `domain/port/in`)
 ```
@@ -170,7 +187,8 @@ AggregateFlightsUseCase
   AggregationResult aggregate(SearchCriteria criteria)
 
 SearchItinerariesUseCase
-  ItineraryPage search(ItineraryFilter filter, PageCursor cursor, int limit)
+  SearchResult search(SearchCriteria criteria, ItineraryFilter filter,
+                      Optional<PageCursor> cursor, int limit)
 ```
 
 ### Outbound (`domain/port/out`)
@@ -180,20 +198,56 @@ FlightProviderPort
   List<Offer> fetch(SearchCriteria criteria)   // throws ProviderUnavailableException
 
 ItineraryRepositoryPort
-  void upsertAll(Collection<Itinerary> itineraries)   // keep cheaper on key conflict
-  ItineraryPage findBy(ItineraryFilter filter, PageCursor cursor, int limit)
+  int upsertAll(Collection<Itinerary> itineraries)   // rows written; cheaper Final Price wins on key conflict
+  ItineraryPage findBy(SearchCriteria criteria, ItineraryFilter filter,
+                       Optional<PageCursor> cursor, int limit)
+
+FreshnessPort
+  Freshness status(SearchCriteria criteria)
+  boolean tryLock(SearchCriteria criteria, Duration ttl)
+  void release(SearchCriteria criteria)
+  void markFresh(SearchCriteria criteria, AggregationResult result, Duration ttl)
+  Optional<AggregationResult> lastResult(SearchCriteria criteria)
 ```
 
-Supporting types:
+### Supporting types
 ```
-SearchCriteria   (Airport origin, Airport destination, LocalDate departureDate)
-ItineraryFilter  (Optional<Airport> origin, Optional<Airport> destination,
-                  Optional<Price> maxPrice, Optional<Carrier> carrier)
-PageCursor       (opaque; encodes last finalPrice + last id)   — see SOLUTION.md for keyset rationale
-ItineraryPage    (List<Itinerary> items, Optional<PageCursor> next)
-AggregationResult(int persisted, Map<Provider, ProviderOutcome> outcomes)
-ProviderOutcome  (ProviderStatus status, int offersReceived, int offersRejected, Duration elapsed)
+SearchCriteria    (Airport origin, Airport destination, LocalDate departureDate)   — origin != destination
+ItineraryFilter   (Optional<Airport> origin, Optional<Airport> destination,
+                   Optional<Price> maxPrice, Optional<Carrier> carrier)
+                  none(), withOrigin/withDestination/withMaxPrice/withCarrier (a null argument clears that component)
+PageCursor        (Price lastFinalPrice, ItineraryKey lastKey)   — opaque to callers; string encoding is a web-adapter
+                  concern. Pages are ordered by (final price, key); the key is unique, so the position is unambiguous.
+                  See SOLUTION.md for keyset rationale
+ItineraryPage     (List<Itinerary> items, Optional<PageCursor> next)   — ItineraryPage.empty()
+SearchResult      (ItineraryPage page, Freshness freshness, Optional<Instant> aggregatedAt,
+                   Map<Provider, ProviderOutcome> lastOutcomes)
+AggregationResult (int persisted, Map<Provider, ProviderOutcome> outcomes, Instant aggregatedAt)
+                  allFailed(): no outcome is OK;  anySucceeded(): at least one outcome is OK
+ProviderOutcome   (ProviderStatus status, int offersReceived, int offersRejected, Duration elapsed)   — succeeded() == (status is OK)
+ProviderStatus    Enum — OK, TIMEOUT, ERROR, CIRCUIT_OPEN
+Freshness         Enum — FRESH, STALE, REFRESHING, MISSING
+ProviderUnavailableException (Provider provider, ProviderStatus status)   — status is never OK
 ```
+
+`SearchResult` is a plain carrier: the relation between `freshness`, `aggregatedAt` and `lastOutcomes` is decided by the application layer, not enforced by the type. `limit` is validated by the application layer (the domain only passes it through).
+
+### Freshness (read-path state)
+
+State of the data for one `SearchCriteria`, as seen by `SearchItinerariesUseCase`:
+
+| Value | Meaning | Read-path behaviour |
+|---|---|---|
+| `FRESH` | Aggregated recently, within the freshness TTL | Serve from the repository only |
+| `STALE` | Data exists but the TTL expired, no refresh running | Serve existing data, trigger a background refresh |
+| `REFRESHING` | A refresh is already running (lock held) | Serve existing data, do not start another |
+| `MISSING` | Never aggregated for this criteria | Aggregate synchronously, then query |
+
+A request that carries a `PageCursor` never triggers aggregation (pages must stay consistent with page 1).
+
+### Optional convention
+
+`AGENTS.md` §6 says "no `Optional` as field or parameter type". The ports and query/result records in this section are the agreed exception: `Optional` is used for `PageCursor` parameters and for optional components of `ItineraryFilter`, `ItineraryPage` and `SearchResult`, because they are boundary carriers where absence is part of the contract and a nullable alternative would leak `null` across module boundaries (also forbidden). Compact constructors reject a `null` `Optional`. Everywhere else the rule stands.
 
 ## 9. Aggregation pipeline (application layer)
 

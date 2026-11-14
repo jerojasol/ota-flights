@@ -84,7 +84,7 @@ Do **not** use: `Flight` (ambiguous — say Segment or Itinerary), `Trip`, `Jour
 - Package root: `io.github.jerojasol.flights`. Module packages: `io.github.jerojasol.flights.domain`, `io.github.jerojasol.flights.application`, `io.github.jerojasol.flights.infrastructure`.
 - Prefer `record` for immutable data. Prefer `sealed` interfaces for closed hierarchies (e.g. validation results).
 - No Lombok. Java 21 makes it unnecessary.
-- No `Optional` as field or parameter type; return type only.
+- No `Optional` as field or parameter type; return type only. Agreed exception: the port parameters and query/result records listed in `docs/domain-model.md` §8 ("Optional convention").
 - No `null` across module boundaries. Use `Optional` or empty collections.
 - Constructor injection only. No field injection.
 - Exceptions: domain exceptions extend `DomainException` (unchecked). Infrastructure maps them to RFC 7807 Problem Details.

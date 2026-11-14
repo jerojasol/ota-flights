@@ -26,6 +26,7 @@ public final class InMemoryItineraryRepository implements ItineraryRepositoryPor
     private final Map<ItineraryKey, Itinerary> rows = new ConcurrentHashMap<>();
     private final AtomicInteger findByCalls = new AtomicInteger();
     private volatile int lastLimit;
+    private volatile Runnable onFindBy = () -> { };
 
     @Override
     public synchronized int upsertAll(Collection<Itinerary> itineraries) {
@@ -44,6 +45,7 @@ public final class InMemoryItineraryRepository implements ItineraryRepositoryPor
     public ItineraryPage findBy(SearchCriteria criteria, ItineraryFilter filter, Optional<PageCursor> cursor,
                                 int limit) {
         findByCalls.incrementAndGet();
+        onFindBy.run();
         lastLimit = limit;
         List<Itinerary> matching = rows.values().stream()
                 .filter(itinerary -> matches(itinerary, criteria, filter))
@@ -56,6 +58,11 @@ public final class InMemoryItineraryRepository implements ItineraryRepositoryPor
         List<Itinerary> items = matching.subList(0, limit);
         Itinerary last = items.getLast();
         return new ItineraryPage(items, Optional.of(new PageCursor(last.finalPrice(), last.key())));
+    }
+
+    /** Runs on every findBy, before the query; lets a test assert what state the caller is in. */
+    public void onFindBy(Runnable hook) {
+        this.onFindBy = hook;
     }
 
     public Collection<Itinerary> all() {

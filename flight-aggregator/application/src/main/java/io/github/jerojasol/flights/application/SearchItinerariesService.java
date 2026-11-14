@@ -61,10 +61,10 @@ public final class SearchItinerariesService implements SearchItinerariesUseCase 
 
         // A cursor request never aggregates: later pages must stay consistent with page 1.
         if (cursor.isPresent()) {
-            return result(criteria, filter, cursor, clampedLimit, status, Optional.empty());
+            return result(criteria, filter, cursor, clampedLimit, status);
         }
         return switch (status) {
-            case FRESH, REFRESHING -> result(criteria, filter, cursor, clampedLimit, status, Optional.empty());
+            case FRESH, REFRESHING -> result(criteria, filter, cursor, clampedLimit, status);
             case MISSING -> coldMiss(criteria, filter, clampedLimit);
             case STALE -> stale(criteria, filter, clampedLimit);
         };
@@ -73,16 +73,16 @@ public final class SearchItinerariesService implements SearchItinerariesUseCase 
     private SearchResult coldMiss(SearchCriteria criteria, ItineraryFilter filter, int limit) {
         Optional<LockToken> lock = freshness.tryLock(criteria, lockTtl);
         if (lock.isEmpty()) {
-            return result(criteria, filter, Optional.empty(), limit, Freshness.REFRESHING, Optional.empty());
+            return result(criteria, filter, Optional.empty(), limit, Freshness.REFRESHING);
         }
-        Optional<AggregationResult> aggregated = Optional.empty();
+        // Null only inside this method: it means "nothing aggregated", so the stored last result is served.
+        AggregationResult aggregated = null;
         Freshness reported = Freshness.MISSING;
         try {
-            AggregationResult result = aggregator.aggregate(criteria);
-            aggregated = Optional.of(result);
+            aggregated = aggregator.aggregate(criteria);
             // An aggregation where every provider failed is not cached as fresh: the next search retries.
-            if (result.anySucceeded()) {
-                freshness.markFresh(criteria, result, freshnessTtl);
+            if (aggregated.anySucceeded()) {
+                freshness.markFresh(criteria, aggregated, freshnessTtl);
                 reported = Freshness.FRESH;
             }
         } catch (RuntimeException aggregationFailed) {
@@ -90,11 +90,14 @@ public final class SearchItinerariesService implements SearchItinerariesUseCase 
         } finally {
             freshness.release(criteria, lock.get());
         }
-        return result(criteria, filter, Optional.empty(), limit, reported, aggregated);
+        // Read the repository only after the lock is released.
+        return aggregated == null
+                ? result(criteria, filter, Optional.empty(), limit, reported)
+                : result(criteria, filter, Optional.empty(), limit, reported, aggregated);
     }
 
     private SearchResult stale(SearchCriteria criteria, ItineraryFilter filter, int limit) {
-        SearchResult result = result(criteria, filter, Optional.empty(), limit, Freshness.STALE, Optional.empty());
+        SearchResult result = result(criteria, filter, Optional.empty(), limit, Freshness.STALE);
         freshness.tryLock(criteria, lockTtl).ifPresent(lock -> {
             try {
                 refreshExecutor.execute(() -> refresh(criteria, lock));
@@ -119,12 +122,18 @@ public final class SearchItinerariesService implements SearchItinerariesUseCase 
     }
 
     private SearchResult result(SearchCriteria criteria, ItineraryFilter filter, Optional<PageCursor> cursor,
-                                int limit, Freshness reported, Optional<AggregationResult> justAggregated) {
+                                int limit, Freshness reported) {
         ItineraryPage page = repository.findBy(criteria, filter, cursor, limit);
-        Optional<AggregationResult> last = justAggregated.or(() -> freshness.lastResult(criteria));
+        Optional<AggregationResult> last = freshness.lastResult(criteria);
         return new SearchResult(page, reported,
                 last.map(AggregationResult::aggregatedAt),
                 last.map(AggregationResult::outcomes).orElse(Map.of()));
+    }
+
+    private SearchResult result(SearchCriteria criteria, ItineraryFilter filter, Optional<PageCursor> cursor,
+                                int limit, Freshness reported, AggregationResult justAggregated) {
+        ItineraryPage page = repository.findBy(criteria, filter, cursor, limit);
+        return new SearchResult(page, reported, Optional.of(justAggregated.aggregatedAt()), justAggregated.outcomes());
     }
 
     private static Duration requirePositive(Duration value, String name) {

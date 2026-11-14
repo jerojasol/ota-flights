@@ -21,6 +21,8 @@ public final class InMemoryFreshness implements FreshnessPort {
     private int issued;
     private AggregationResult lastResult;
     private Duration markedTtl;
+    private RuntimeException markFreshFailure;
+    private int lastResultCalls;
 
     public InMemoryFreshness(Freshness status) {
         this.status = status;
@@ -34,6 +36,16 @@ public final class InMemoryFreshness implements FreshnessPort {
     public InMemoryFreshness withLastResult(AggregationResult result) {
         this.lastResult = result;
         return this;
+    }
+
+    /** Simulates the freshness store failing on write (e.g. Redis down) after a successful aggregation. */
+    public InMemoryFreshness failingMarkFreshWith(RuntimeException failure) {
+        this.markFreshFailure = failure;
+        return this;
+    }
+
+    public synchronized int lastResultCalls() {
+        return lastResultCalls;
     }
 
     public synchronized List<String> calls() {
@@ -84,6 +96,9 @@ public final class InMemoryFreshness implements FreshnessPort {
     @Override
     public synchronized void markFresh(SearchCriteria criteria, AggregationResult result, Duration ttl) {
         calls.add("markFresh");
+        if (markFreshFailure != null) {
+            throw markFreshFailure;
+        }
         status = Freshness.FRESH;
         lastResult = result;
         markedTtl = ttl;
@@ -91,6 +106,7 @@ public final class InMemoryFreshness implements FreshnessPort {
 
     @Override
     public synchronized Optional<AggregationResult> lastResult(SearchCriteria criteria) {
+        lastResultCalls++;
         return Optional.ofNullable(lastResult);
     }
 }

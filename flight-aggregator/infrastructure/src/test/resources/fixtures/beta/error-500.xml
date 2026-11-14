@@ -1,0 +1,5 @@
+<Fault xmlns="urn:beta-gds:search:v2">
+  <Code>SYSTEM_ERROR</Code>
+  <Message>Inventory backend timed out</Message>
+  <Reference>b4c5d6</Reference>
+</Fault>

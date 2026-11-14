@@ -733,3 +733,19 @@ Verified: lint clean, 22 tests passed, build OK. Not committed.
 
 Verified: lint clean, 33 tests passed, build OK. Not committed.
 **Artifacts:** `frontend/src/useFreshnessPolling.ts`, `frontend/src/components/{FreshnessBadge,ProviderPanel,SearchResults,ResultsList}.tsx`, `frontend/src/App.tsx`, `frontend/src/useItinerarySearch.ts`, `frontend/src/styles.css`, `frontend/src/freshness.test.tsx`, `docs/ai-log.md`.
+
+## 2026-11-14 — G4: frontend container (multi-stage build and nginx)
+
+**Intent:** Package the frontend as a container that serves the built bundle and proxies `/api` to the aggregator inside the compose network.
+**Prompt (summary):** `frontend/prompts/04-docker-nginx.md`: a `node:24-alpine` build stage with lockfile-first `npm ci` (no tests in the image) and a `nginx:stable-alpine` run stage; `nginx.conf` with `/healthz`, `/api/` proxied to `flight-aggregator:8080` with a 60 s read timeout, hashed `/assets/` cached for a year, `index.html` with `no-cache`, and gzip; `.dockerignore`.
+**Generated:**
+- `frontend/Dockerfile`, `frontend/nginx.conf` (with a comment on why there is no resolver: compose starts this service after the aggregator is healthy), `frontend/.dockerignore` (the list from the prompt, as written).
+- Verification: `docker build` runs; `nginx -t` fails outside compose with `host not found in upstream "flight-aggregator"`, as the prompt predicted. With `--add-host flight-aggregator:127.0.0.1`, `nginx -t` passes, `/healthz` returns `ok`, `/` returns `Cache-Control: no-cache`, gzip is applied, and a deep route serves the SPA shell.
+**Human review / corrections:** Accepted with two changes from the human:
+1. **Healthcheck host.** The URL changed from `http://localhost/healthz` to `http://127.0.0.1/healthz`. On Alpine, `localhost` can resolve to `::1` first, and nginx listens on IPv4 only. My first verification only saw the status `starting` at 2 s and never waited for a final status, so it would not have caught this. After the change, a container with the stub upstream reached **`healthy`**, and every health log entry had exit code 0. For the record, in this image `localhost` still worked: `/etc/hosts` lists `127.0.0.1` before `::1` and `wget localhost` exited 0. The IP form removes the dependency on resolution order.
+2. **One `Cache-Control` header on `/assets/`.** `expires 1y` was dropped. The location now sends only `Cache-Control: public, max-age=31536000, immutable`, which was verified on a hashed JS asset: one header and no `Expires`. I had noticed the duplicate headers in the first version but left them because the prompt asked for both.
+
+Other notes: the image is **62.3 MB**. The first build took 66 s (cold cache), and a second build with no changes took **1.7 s**, all layers cached. Not checked here: the proxy path (`/api/` → aggregator), which needs compose and is the F2 check.
+
+Not committed.
+**Artifacts:** `frontend/Dockerfile`, `frontend/nginx.conf`, `frontend/.dockerignore`, `docs/ai-log.md`.

@@ -2,6 +2,7 @@ package io.github.jerojasol.flights.domain.port.out;
 
 import io.github.jerojasol.flights.domain.model.AggregationResult;
 import io.github.jerojasol.flights.domain.model.Freshness;
+import io.github.jerojasol.flights.domain.model.LockToken;
 import io.github.jerojasol.flights.domain.model.SearchCriteria;
 
 import java.time.Duration;
@@ -11,10 +12,11 @@ public interface FreshnessPort {
 
     Freshness status(SearchCriteria criteria);
 
-    /** @return true when the caller now holds the aggregation lock for these criteria */
-    boolean tryLock(SearchCriteria criteria, Duration ttl);
+    /** @return the caller's token when it now holds the aggregation lock; empty when another caller holds it */
+    Optional<LockToken> tryLock(SearchCriteria criteria, Duration ttl);
 
-    void release(SearchCriteria criteria);
+    /** Releases the lock only if {@code token} is still its holder; otherwise (expired or re-acquired) a no-op. */
+    void release(SearchCriteria criteria, LockToken token);
 
     void markFresh(SearchCriteria criteria, AggregationResult result, Duration ttl);
 

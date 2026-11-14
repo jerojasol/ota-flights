@@ -94,7 +94,7 @@ Each invariant must be enforced in the constructor/factory of the owning type an
 
 A violation of O1, S1–S3 or I1–I9 does not throw inside the aggregation pipeline: the Offer is **rejected** with a typed reason (see section 6). Direct construction of an invalid `Itinerary` or `Segment` outside the pipeline throws `InvalidItineraryException` / `InvalidSegmentException`.
 
-Exceptions: every type throws its own unchecked `DomainException` subtype: `InvalidAirportException` (A1), `InvalidCarrierException` (C1), `InvalidFlightNumberException` (F1), `InvalidPriceException` (P1–P4, including cross-currency arithmetic), `InvalidSegmentException` (S1–S3), `InvalidOfferException` (null provider/price, null or empty segments, validator built without a reference currency), `InvalidItineraryKeyException` (empty segments, malformed stored key), `InvalidItineraryException` (I1–I12), `InvalidSearchException` (search criteria, filter, cursor, page and search result), `InvalidAggregationException` (provider outcome, aggregation result, unavailable-provider status).
+Exceptions: every type throws its own unchecked `DomainException` subtype: `InvalidAirportException` (A1), `InvalidCarrierException` (C1), `InvalidFlightNumberException` (F1), `InvalidPriceException` (P1–P4, including cross-currency arithmetic), `InvalidSegmentException` (S1–S3), `InvalidOfferException` (null provider/price, null or empty segments, validator built without a reference currency), `InvalidItineraryKeyException` (empty segments, malformed stored key), `InvalidItineraryException` (I1–I12), `InvalidSearchException` (search criteria, filter, cursor, page, search result and lock token), `InvalidAggregationException` (provider outcome, aggregation result, unavailable-provider status).
 
 ### Rehydration
 
@@ -208,8 +208,8 @@ ItineraryRepositoryPort
 
 FreshnessPort
   Freshness status(SearchCriteria criteria)
-  boolean tryLock(SearchCriteria criteria, Duration ttl)
-  void release(SearchCriteria criteria)
+  Optional<LockToken> tryLock(SearchCriteria criteria, Duration ttl)   // empty when another caller holds the lock
+  void release(SearchCriteria criteria, LockToken token)             // no-op unless token is the current holder
   void markFresh(SearchCriteria criteria, AggregationResult result, Duration ttl)
   Optional<AggregationResult> lastResult(SearchCriteria criteria)
 ```
@@ -231,6 +231,7 @@ AggregationResult (int persisted, Map<Provider, ProviderOutcome> outcomes, Insta
 ProviderOutcome   (ProviderStatus status, int offersReceived, int offersRejected, Duration elapsed)   — succeeded() == (status is OK)
 ProviderStatus    Enum — OK, TIMEOUT, ERROR, CIRCUIT_OPEN
 Freshness         Enum — FRESH, STALE, REFRESHING, MISSING
+LockToken         (String value)   — non-blank; identifies one holder of the aggregation lock
 ProviderUnavailableException (Provider provider, ProviderStatus status)   — status is never OK
 ```
 
@@ -248,6 +249,12 @@ State of the data for one `SearchCriteria`, as seen by `SearchItinerariesUseCase
 | `MISSING` | Never aggregated for this criteria | Aggregate synchronously, then query |
 
 A request that carries a `PageCursor` never triggers aggregation (pages must stay consistent with page 1).
+
+### Aggregation lock ownership
+
+The aggregation lock for one `SearchCriteria` expires after its TTL so a crashed holder cannot block refreshes forever. An aggregation can therefore outlive its lock, and another caller can acquire it in the meantime. To keep the first caller from deleting the second caller's lock, `tryLock` returns a `LockToken` that identifies the holder, and `release` only removes the lock when the token still matches (compare-and-delete in the adapter). Releasing an expired or foreign lock is a silent no-op.
+
+An aggregation in which every Provider failed is not marked fresh, so the next search retries; `lastOutcomes` prefers the aggregation just performed over a stored result.
 
 ### Optional convention
 

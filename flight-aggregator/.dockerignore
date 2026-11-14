@@ -1,0 +1,11 @@
+**/target/
+.idea/
+*.iml
+prompts/
+docs/
+.opencode/
+AGENTS.md
+README.md
+HELP.md
+Dockerfile
+.dockerignore

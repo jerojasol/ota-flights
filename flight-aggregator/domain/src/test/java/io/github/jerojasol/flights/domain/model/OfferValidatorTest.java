@@ -143,6 +143,13 @@ class OfferValidatorTest {
     }
 
     @Test
+    void should_accept_immutable_empty_map_when_summary_is_built_directly() {
+        ValidationSummary summary = new ValidationSummary(List.of(), Map.of());
+
+        assertThat(summary.rejected()).isZero();
+    }
+
+    @Test
     void should_return_empty_summary_when_there_are_no_offers() {
         ValidationSummary summary = validator.validateAll(List.of());
 

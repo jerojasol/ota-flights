@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Aggregate root: a complete journey from origin to destination sold at a Price. */
+/** Aggregate root: a complete Itinerary from origin to destination sold at a Price. */
 public final class Itinerary {
 
     public static final int MAX_SEGMENTS = 4;

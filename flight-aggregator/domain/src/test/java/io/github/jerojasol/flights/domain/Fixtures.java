@@ -30,7 +30,7 @@ public final class Fixtures {
     public static final Airport BCN = new Airport("BCN");
     public static final Airport LIS = new Airport("LIS");
 
-    private static final List<Airport> ROUTE = List.of(MAD, JFK, LHR, MIA, BCN, LIS);
+    private static final List<Airport> AIRPORT_CHAIN = List.of(MAD, JFK, LHR, MIA, BCN, LIS);
 
     public static final FlightNumber IB6251 = FlightNumber.of("IB6251");
     public static final FlightNumber IB4120 = FlightNumber.of("IB4120");
@@ -60,7 +60,7 @@ public final class Fixtures {
         for (int i = 0; i < minutes.length; i += 2) {
             int leg = i / 2;
             Instant arrival = clock.plus(Duration.ofMinutes(minutes[i]));
-            segments.add(new Segment(IB6251, ROUTE.get(leg), clock, ROUTE.get(leg + 1), arrival));
+            segments.add(new Segment(IB6251, AIRPORT_CHAIN.get(leg), clock, AIRPORT_CHAIN.get(leg + 1), arrival));
             clock = i + 1 < minutes.length ? arrival.plus(Duration.ofMinutes(minutes[i + 1])) : arrival;
         }
         return segments;

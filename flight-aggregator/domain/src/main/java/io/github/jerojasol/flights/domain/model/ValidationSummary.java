@@ -9,7 +9,9 @@ public record ValidationSummary(List<Offer> valid, Map<RejectionReason, Integer>
 
     public ValidationSummary {
         valid = List.copyOf(valid);
-        rejectedByReason = Collections.unmodifiableMap(new EnumMap<>(rejectedByReason));
+        Map<RejectionReason, Integer> copy = new EnumMap<>(RejectionReason.class);
+        copy.putAll(rejectedByReason);
+        rejectedByReason = Collections.unmodifiableMap(copy);
     }
 
     public int rejected() {

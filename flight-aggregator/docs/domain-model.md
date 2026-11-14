@@ -200,7 +200,12 @@ AggregateFlightsUseCase
 SearchItinerariesUseCase
   SearchResult search(SearchCriteria criteria, ItineraryFilter filter,
                       Optional<PageCursor> cursor, int limit)
+
+RefreshItinerariesUseCase
+  Optional<AggregationResult> refresh(SearchCriteria criteria)
 ```
+
+`RefreshItinerariesUseCase` is the on-demand refresh (e.g. an operator's request). It follows the same lock and freshness rules as a search's cold miss: it aggregates only while holding the aggregation lock, marks the criteria fresh only if at least one Provider succeeded, and always releases the lock. It returns empty when the lock cannot be taken (another aggregation is running, or the freshness store is unavailable, see Freshness below); nothing is aggregated in that case.
 
 ### Outbound (`domain/port/out`)
 ```

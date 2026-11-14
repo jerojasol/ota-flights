@@ -1,6 +1,6 @@
 package io.github.jerojasol.flights.infrastructure.config;
 
-import io.github.jerojasol.flights.domain.port.out.FlightProviderPort;
+import io.github.jerojasol.flights.infrastructure.provider.ProviderCircuitHealthIndicator;
 import io.github.jerojasol.flights.infrastructure.provider.ResilienceSettings;
 import io.github.jerojasol.flights.infrastructure.provider.alpha.AlphaProviderAdapter;
 import io.github.jerojasol.flights.infrastructure.provider.beta.BetaProviderAdapter;
@@ -13,6 +13,10 @@ import org.springframework.context.annotation.Configuration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/**
+ * The three provider adapters, one per Provider, and a health indicator per circuit breaker (bean names end in
+ * {@code HealthIndicator}, so they show as {@code alphaProvider}, {@code betaProvider}, {@code gammaProvider}).
+ */
 @Configuration
 @EnableConfigurationProperties(ProviderProperties.class)
 class ProviderConfiguration {
@@ -24,23 +28,38 @@ class ProviderConfiguration {
     }
 
     @Bean
-    FlightProviderPort alphaProvider(ProviderProperties properties,
-                                     @Qualifier("providerCallExecutor") ExecutorService providerCallExecutor) {
+    AlphaProviderAdapter alphaProvider(ProviderProperties properties,
+                                       @Qualifier("providerCallExecutor") ExecutorService providerCallExecutor) {
         return new AlphaProviderAdapter(properties.alpha().baseUrl(),
                 ResilienceSettings.defaults(properties.timeout()), providerCallExecutor);
     }
 
     @Bean
-    FlightProviderPort betaProvider(ProviderProperties properties,
-                                    @Qualifier("providerCallExecutor") ExecutorService providerCallExecutor) {
+    BetaProviderAdapter betaProvider(ProviderProperties properties,
+                                     @Qualifier("providerCallExecutor") ExecutorService providerCallExecutor) {
         return new BetaProviderAdapter(properties.beta().baseUrl(),
                 ResilienceSettings.defaults(properties.timeout()), providerCallExecutor);
     }
 
     @Bean
-    FlightProviderPort gammaProvider(ProviderProperties properties,
-                                     @Qualifier("providerCallExecutor") ExecutorService providerCallExecutor) {
+    GammaProviderAdapter gammaProvider(ProviderProperties properties,
+                                       @Qualifier("providerCallExecutor") ExecutorService providerCallExecutor) {
         return new GammaProviderAdapter(properties.gamma().baseUrl(),
                 ResilienceSettings.defaults(properties.timeout()), providerCallExecutor);
+    }
+
+    @Bean
+    ProviderCircuitHealthIndicator alphaProviderHealthIndicator(AlphaProviderAdapter alpha) {
+        return new ProviderCircuitHealthIndicator(alpha::circuitState);
+    }
+
+    @Bean
+    ProviderCircuitHealthIndicator betaProviderHealthIndicator(BetaProviderAdapter beta) {
+        return new ProviderCircuitHealthIndicator(beta::circuitState);
+    }
+
+    @Bean
+    ProviderCircuitHealthIndicator gammaProviderHealthIndicator(GammaProviderAdapter gamma) {
+        return new ProviderCircuitHealthIndicator(gamma::circuitState);
     }
 }

@@ -81,6 +81,14 @@ public final class ProviderResilience {
                 && unavailable.getCause() instanceof ProviderRequestRejected;
     }
 
+    public ProviderCircuitState circuitState() {
+        return switch (circuitBreaker.getState()) {
+            case OPEN, FORCED_OPEN -> ProviderCircuitState.OPEN;
+            case HALF_OPEN -> ProviderCircuitState.HALF_OPEN;
+            default -> ProviderCircuitState.CLOSED;
+        };
+    }
+
     /** Failed calls currently recorded by this provider's circuit breaker. */
     public int failedCalls() {
         return circuitBreaker.getMetrics().getNumberOfFailedCalls();

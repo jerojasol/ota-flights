@@ -4,6 +4,7 @@ import io.github.jerojasol.flights.domain.model.Provider;
 import io.github.jerojasol.flights.domain.model.ProviderResponse;
 import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.domain.port.out.FlightProviderPort;
+import io.github.jerojasol.flights.infrastructure.provider.ProviderCircuitState;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderResilience;
 import io.github.jerojasol.flights.infrastructure.provider.ResilienceSettings;
 import org.slf4j.Logger;
@@ -38,6 +39,11 @@ public final class AlphaProviderAdapter implements FlightProviderPort {
                 criteria.origin().code(), criteria.destination().code(), criteria.departureDate(),
                 response.offers().size(), response.unmappable());
         return response;
+    }
+
+    /** For the provider health indicator, built in config. */
+    public ProviderCircuitState circuitState() {
+        return resilience.circuitState();
     }
 
     /** Failed calls recorded by this adapter's circuit breaker; for tests in this package. */

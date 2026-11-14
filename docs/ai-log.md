@@ -749,3 +749,16 @@ Other notes: the image is **62.3 MB**. The first build took 66 s (cold cache), a
 
 Not committed.
 **Artifacts:** `frontend/Dockerfile`, `frontend/nginx.conf`, `frontend/.dockerignore`, `docs/ai-log.md`.
+
+## 2026-11-14 — Re-submitting an identical search does not refetch
+
+**Intent:** Make the Search button fetch again when the user submits the same filters, which previously did nothing.
+**Prompt (summary):** Why does clicking "Search" again with unchanged filters not call the API? Then: apply the proposed fix, with no commit.
+**Generated:**
+- Diagnosis: the query key `["itineraries", params]` compares by value. Re-submitting the same values creates an equal key, so React Query sees no change and does not refetch. The URL is also unchanged, so there is no `pushState`, and `SearchResults` keeps its key, so the freshness polling does not restart. `staleTime` is 0, but nothing triggers a refetch: `refetchOnWindowFocus` is off and no observer mounts.
+- `frontend/src/App.tsx`: when the submitted URL equals the current one, `handleSubmit` calls `queryClient.invalidateQueries({ queryKey: ['itineraries', next] })` and returns. Otherwise it behaves as before.
+- `frontend/src/App.test.tsx`: new test "searches again when the same search is submitted twice". It checks that a second `fetch` happens and that the URL is unchanged.
+**Human review / corrections:** Human approved the proposed fix. Verified: lint clean; 34 tests passed (1 new); build OK. Mutation check: with the invalidation removed, the new test fails. Restored.
+Not verified in a real browser by the agent. Not committed.
+**Follow-up:** the user reported that it still did not work in the browser. Cause: the running container (`ota-frontend` on port 3000) was built before the fix and still served the old bundle (`index-DKEyiYq0.js`). The source change does not reach nginx until the image is rebuilt. The image was rebuilt (`index-BtkZWRBY.js`), the old container was removed, and a new one was started on `ota-flights_default` at port 3000. The container reports `starting` for a few seconds after start, then becomes healthy, and `/api` through nginx returns 200. Lesson for the workflow: after any frontend source change, rebuild the image before testing the container (`npm run dev` avoids this).
+**Artifacts:** `frontend/src/App.tsx`, `frontend/src/App.test.tsx`, `docs/ai-log.md`.

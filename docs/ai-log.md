@@ -622,3 +622,40 @@ Verified:
 Not committed.
 **Known gaps:** no root `docker-compose.yml` (repository-level step); no authentication on admin and actuator; the aggregation-under-lock sequence still exists in three places (D5 MINOR, deferred).
 **Artifacts:** `flight-aggregator/prompts/infrastructure/06-wiring-and-boot.md`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/{config,observability,scheduling,provider}/**`, `flight-aggregator/infrastructure/src/main/resources/application.yaml`, `flight-aggregator/infrastructure/src/test/resources/application-test.yaml`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/{FlightAggregatorApplicationIT,config/AggregationPropertiesTest,scheduling/WarmRoutesSchedulerTest}.java`, `flight-aggregator/Dockerfile`, `flight-aggregator/.dockerignore`, `docs/SOLUTION.md`.
+
+## 2026-11-14 — D7: end-to-end test (closes Phase D)
+
+**Intent:** One integration test that reads like documentation of the whole system: aggregation, deduplication, markup, keyset paging, filtering, a provider failure during a background refresh, cheapest-wins across runs, and a manual refresh.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/07-end-to-end.md`: `EndToEndIT` with `@SpringBootTest(RANDOM_PORT)`, test profile, Postgres and Redis containers, one WireMock for the three providers, and six steps in one `@Test`, under ~30 s.
+**Generated:**
+- `EndToEndIT` (one test, 6 commented steps, helpers grouped as Steps / HTTP / Providers / JSON) using Spring's `RestTestClient` and AssertJ.
+- A test-only fixture `fixtures/beta/overlap-plus-beta-only.xml`: Beta's exported two itineraries plus IB6251, sold by Beta only.
+**Decisions:**
+- **A Beta-only itinerary was added.** The exported `two-itineraries.*` fixtures carry the same two itineraries for all three providers, so step 4's "Beta-only itineraries still present" could not be asserted with them. The new fixture keeps the overlap (7 offers → 3 itineraries) and adds one itinerary only Beta sells. The exported fixtures were not changed.
+- **Freshness is expired by deleting the `fresh:*` key**, not by a 2 s TTL. D6's startup checks require `freshness-ttl > lock-ttl ≥ 2 × provider-budget` (7 s at least), so the prompt's first option is rejected at boot; the prompt's alternative was used.
+- **Expected values are written out** (377.09, 544.95, 1471.07; GAMMA, BETA, GAMMA), not computed, so the test documents the outcome. The markup is still checked as `final = base × 1.05` (HALF_EVEN) for every item.
+- **Step 5 forces the refresh through the stale path** (delete the marker, search, wait for FRESH), so step 6 is the only manual refresh. Step 6 asserts `persisted = 0`: nothing cheaper arrived, so the upsert rewrote nothing.
+**Human review / corrections:** None yet. The test passed on the first run, so a vacuous pass was ruled out by what it asserts:
+- step 4's provider statuses (BETA ERROR, ALPHA and GAMMA OK) prove the background refresh ran;
+- step 5's change of source to ALPHA at 315.00 can only come from a refresh;
+- step 6's `persisted = 0` fails if the upsert rewrote rows unconditionally.
+
+Verified: `EndToEndIT` passed 3 runs in a row, about 10 s each; `./mvnw verify` passes (223 domain, 41 application, 88 infrastructure unit tests, 49 ITs). Not committed.
+**Phase D status:** closed. Still open at repository level: no root `docker-compose.yml`. Two startup checks were left for the human to decide (D6 notes: retry vs fan-out budget; warm interval vs freshness TTL). The aggregation-under-lock sequence is duplicated in three places (D5 MINOR, deferred).
+**Artifacts:** `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/EndToEndIT.java`, `flight-aggregator/infrastructure/src/test/resources/fixtures/beta/overlap-plus-beta-only.xml`, `flight-aggregator/prompts/infrastructure/07-end-to-end.md`.
+
+## 2026-11-14 — Phase D accepted: retry vs budget documented, warm-interval check, lock-sequence debt recorded
+
+**Intent:** Close the three items left open after D7, as the human decided.
+**Prompt (summary):** The human accepted Phase D, including the two D7 deviations, and decided:
+1. Retry vs fan-out budget: no validation and no change to defaults. Document it in `SOLUTION.md` §6, and add "budget-aware retry" to §7.
+2. Add a startup check that `warm-interval ≥ freshness-ttl`, with a test.
+3. Do not refactor the aggregation-under-lock sequence; record it in §7 as technical debt.
+**Generated:**
+- `docs/SOLUTION.md` §6: a retry started late is abandoned by the fan-out; the provider is reported as TIMEOUT rather than ERROR; the abandoned retry still calls it; its offers arrive with the next refresh; data stays correct.
+- `docs/SOLUTION.md` §7 (first entries under the template line): "Budget-aware retry", and the known technical debt that the lock sequence is written three times, with why the copies differ.
+- `AggregationProperties`: `warm-interval ≥ freshness-ttl`, with a clear message.
+- `AggregationPropertiesTest`: 3 new tests (shorter interval with routes fails; equal is accepted; no routes, not checked).
+**Decisions:** **The interval check applies only when `warm-routes` is set.** With the scheduler disabled the interval is unused; checking it anyway would make startup fail when someone raises `FRESHNESS_TTL` without touching `WARM_INTERVAL`, with nothing actually wrong. This narrows the human's instruction slightly and is reported for confirmation.
+**Human review / corrections:** All three outcomes decided by the human. Mutation check: with the new check removed temporarily, the "shorter interval with routes" test failed; it was then restored. Verified: `./mvnw verify` passes (223 domain, 41 application, 91 infrastructure unit tests, 49 ITs). Not committed, per the human's instruction.
+**Artifacts:** `docs/SOLUTION.md`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/AggregationProperties.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/config/AggregationPropertiesTest.java`.

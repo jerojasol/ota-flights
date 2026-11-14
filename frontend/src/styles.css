@@ -40,3 +40,157 @@ h1 {
 .muted {
   color: var(--color-muted);
 }
+
+button {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.small {
+  font-size: 0.85rem;
+}
+
+.search-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space);
+  align-items: end;
+  padding: var(--space);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.field input {
+  font: inherit;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.field input[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+.field-error {
+  color: var(--color-danger);
+  font-size: 0.85rem;
+}
+
+.error-summary {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0.5rem 1.5rem;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius);
+}
+
+.hint,
+.status,
+.empty,
+.error-box {
+  margin-top: var(--space);
+  padding: var(--space);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.status {
+  border-style: dashed;
+}
+
+.error-box {
+  border-color: var(--color-danger);
+}
+
+.error-box p:first-child {
+  color: var(--color-danger);
+  margin-top: 0;
+}
+
+.count {
+  margin: var(--space) 0 0.5rem;
+  color: var(--color-muted);
+}
+
+.results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.card {
+  padding: var(--space);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space);
+}
+
+.route {
+  font-weight: 600;
+}
+
+.price {
+  text-align: right;
+}
+
+.final-price {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.segments {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+.tag {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-muted);
+}
+
+.more {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  margin: var(--space) 0;
+}

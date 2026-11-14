@@ -11,6 +11,7 @@ import { ProviderPanel } from './ProviderPanel'
 import { ResultsList } from './ResultsList'
 
 const BUSY_MESSAGE = 'A refresh is already in progress, or refreshing is temporarily unavailable.'
+const NO_PROVIDER_MESSAGE = 'No provider answered; showing stored results.'
 
 function describeFilters(state: SearchState): string {
   const parts = [`${state.origin} → ${state.destination}`, state.date]
@@ -42,6 +43,11 @@ export function SearchResults({ params, result }: Props) {
     mutationFn: () => triggerAggregation({ origin: params.origin, destination: params.destination, date: params.date }),
     onMutate: () => setMessage(null),
     onSuccess: (outcome) => {
+      // Nothing was stored, and the search response keeps describing the last aggregation that produced data.
+      if (!Object.values(outcome.providers).some((provider) => provider?.status === 'OK')) {
+        setMessage({ text: NO_PROVIDER_MESSAGE, error: false })
+        return
+      }
       polling.markFresh({ items: [], nextCursor: null, freshness: 'FRESH', ...outcome })
       applyFresh()
     },

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Smoke test against a running stack. Needs curl and jq.
-# Usage: ./scripts/smoke.sh [base-url] [date]
+# Usage: ./scripts/smoke.sh [base-url] [date] [frontend-url]
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8080}"
 DATE="${2:-2026-11-20}"
+FRONTEND_URL="${3:-http://localhost:3000}"
 MARKUP="${MARKUP_PERCENTAGE:-5}"
 
 failures=0
@@ -76,6 +77,23 @@ case "$ctype" in
   "400 application/problem+json"*) pass "missing params: 400 problem+json" ;;
   *) fail "missing params: got '$ctype'" ;;
 esac
+
+# 6. Frontend
+code="$(curl -s -o /dev/null -w '%{http_code}' "$FRONTEND_URL/healthz")"
+if [ "$code" = "200" ]; then pass "frontend /healthz: 200"; else fail "frontend /healthz: HTTP $code"; fi
+
+code="$(curl -s -o "$tmp/index.html" -w '%{http_code}' "$FRONTEND_URL/")"
+if [ "$code" = "200" ] && grep -q 'id="root"' "$tmp/index.html"; then pass "frontend /: 200 with app root"
+else fail "frontend /: HTTP $code or no app root element"; fi
+
+# Through nginx: proves the /api proxy, which no unit test covers.
+code="$(curl -s -o "$tmp/proxy.json" -w '%{http_code}' \
+  "$FRONTEND_URL/api/itineraries?origin=MAD&destination=JFK&date=$DATE&limit=1")"
+if [ "$code" = "200" ] && jq -e '.items | length > 0' "$tmp/proxy.json" >/dev/null 2>&1; then
+  pass "search through frontend proxy: 200 with items"
+else
+  fail "search through frontend proxy: HTTP $code"
+fi
 
 if [ "$failures" -gt 0 ]; then echo "$failures check(s) failed"; exit 1; fi
 echo "all checks passed"

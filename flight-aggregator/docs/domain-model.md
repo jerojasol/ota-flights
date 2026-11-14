@@ -62,7 +62,7 @@ Each invariant must be enforced in the constructor/factory of the owning type an
 - C1. Code is exactly 2 uppercase ASCII alphanumerics.
 
 ### FlightNumber
-- F1. Composed of a valid Carrier code followed by 1 to 4 digits.
+- F1. Composed of a valid Carrier code followed by a number from 1 to 9999, written with 1 to 4 digits; leading zeros are not significant (`IB117` and `IB0117` are the same flight number).
 
 ### Price
 - P1. Amount is non-negative.

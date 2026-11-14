@@ -23,7 +23,7 @@ Use the provider's vocabulary exactly (Beta: `Itineraries`, `Itinerary`, `Legs`,
 - **DTO fields hold raw strings.** Numbers, amounts, dates and timestamps are parsed in the mapper, per itinerary, never by the format parser (no `BigDecimal`, `int` or `Instant` fields in DTOs). Otherwise one unreadable value fails the whole body as `ERROR` instead of counting one unmappable itinerary. Jackson keeps a JSON number's original text when the target is `String`, so no precision is lost.
 - Alpha: `List<AlphaItinerary>` via Jackson JSON.
 - Beta: `XmlMapper` from `tools.jackson.dataformat.xml`; handle the namespace; mutable classes allowed if records fight with XML.
-- Gamma: no DTO tree; a `GammaLineParser` that parses one CSV line into a small record and a streaming reader that yields lines until `#END`, failing with a clear exception if `#END` is missing.
+- Gamma: no DTO tree; a `GammaLineParser` that parses one CSV line into a small record and a streaming reader that yields lines until `#END`, failing with a clear exception if `#END` is missing. A stream that ends without `#END` is **truncated** (the connection dropped mid-body): that is a transport failure, so it stays retryable and must **not** be a `ProviderContractViolation`.
 
 ### 3. `{Provider}OfferMapper` — DTO → `List<Offer>`
 This is where normalisation lives:
@@ -32,7 +32,11 @@ This is where normalisation lives:
 - Gamma: `yyyyMMddHHmm` UTC → `Instant`; `price_cents` → `Price` (divide by 100, scale 2); split `|` then `;`.
 - **One bad itinerary never fails the response.** An itinerary that cannot be turned into an `Offer` is skipped and counted: return the domain's `ProviderResponse(List<Offer> offers, int unmappable)` (`domain-model.md` §8). The application counts `unmappable` as received and rejected for that provider (§9); there is no per-reason breakdown.
 - Nulls and structural problems are checked **explicitly**, before building anything: null entries, missing elements/attributes/fields, a Gamma line with the wrong field count. Never `catch (RuntimeException)`.
-- Catch only `DomainException` plus the format's own parse exception: `DateTimeParseException` (Alpha), `DateTimeException` for timestamps and IANA zones (Beta), `NumberFormatException` for cents and `DateTimeParseException` for `yyyyMMddHHmm` (Gamma).
+- Catch only `DomainException`, the format's own parse exception, and the mapper's own structural-check exception (Beta's private `MalformedEntry`): `DateTimeParseException` (Alpha), `DateTimeException` for timestamps and IANA zones (Beta), `NumberFormatException` for cents and `DateTimeParseException` for `yyyyMMddHHmm` (Gamma).
+- **Three failure kinds, never mixed:**
+  1. *One itinerary is bad* (dead leg, missing field, null entry, unreadable value, Gamma line with the wrong field count) → skipped and counted in `unmappable`. The response still succeeds.
+  2. *The 2xx body as a whole breaks the contract* (unreadable JSON/XML, missing top-level element such as Beta's `Itineraries`, Gamma's header row missing or wrong) → throw `infrastructure.provider.ProviderContractViolation` from the parser or mapper. It becomes `ERROR`, is **not retried** (it would fail the same way), and the circuit breaker still records it.
+  3. *Transport failure* (non-2xx status, connection reset, read timeout, Gamma stream truncated before `#END`) → `ERROR`, retried.
 - Connection rules are not checked in the mapper; `OfferValidator` does that after mapping.
 
 ### 4. `{Provider}Client`
@@ -42,7 +46,7 @@ This is where normalisation lives:
 Wraps `client + mapper` with Resilience4j **programmatically**:
 - `TimeLimiter` (per-provider timeout from config) → on timeout `ProviderUnavailableException(TIMEOUT)`.
 - `CircuitBreaker` (sliding window 10, failure rate 50%, wait 30 s) → when open `ProviderUnavailableException(CIRCUIT_OPEN)`.
-- `Retry` (max 2 attempts, only on `ERROR`, not on `TIMEOUT`).
+- `Retry` (max 2 attempts, only on transport `ERROR`s: not on `TIMEOUT`, `CIRCUIT_OPEN` or `ProviderContractViolation`). This is already implemented in the shared `infrastructure.provider.ProviderResilience`; reuse it, together with `ProviderRestClients` for the HTTP client.
 Order: `Retry(CircuitBreaker(TimeLimiter(call)))`. Use a dedicated `ScheduledExecutorService` or the shared virtual-thread executor for the time limiter.
 
 ### 6. Register in `ProviderConfiguration`
@@ -51,7 +55,7 @@ Bean per adapter; `@ConfigurationProperties("providers")` record with `alpha.bas
 ## Tests
 
 - `{Provider}OfferMapperTest` (unit, fixtures): the two-itinerary fixture yields 2 offers with the expected `Instant`s, prices, `FlightNumber`s and segment order; the trap fixture is handled; the empty fixture yields 0; an itinerary with an invalid segment is skipped and counted; the malformed-entries fixture yields its one valid offer and counts every malformed entry as unmappable.
-- `{Provider}ProviderAdapterIT` (WireMock, no Spring): success; 500 → `ERROR` after retry; fixed delay > timeout → `TIMEOUT` within budget; N consecutive failures → `CIRCUIT_OPEN` without hitting WireMock (assert request count); for Gamma, a body without `#END` → `ERROR`.
+- `{Provider}ProviderAdapterIT` (WireMock, no Spring): success; 500 → `ERROR` after retry; fixed delay > timeout → `TIMEOUT` within budget; N consecutive failures → `CIRCUIT_OPEN` without hitting WireMock (assert request count); a 200 whose body breaks the contract → `ERROR` after **exactly one** request; for Gamma, a body without `#END` → `ERROR` after a retry (two requests), because truncation is a transport failure.
 
 ## Acceptance
 

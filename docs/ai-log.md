@@ -509,19 +509,15 @@ Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 applicat
 1. Fail closed: with Redis unreachable, `status` returns STALE, `tryLock` returns empty, `lastResult` is empty. An IT with 64 concurrent searches through the real `SearchItinerariesService` asserts zero aggregator calls. Document the outage in `SOLUTION.md` §6 and the adapter Javadoc.
 2. A corrupt `seen` value is discarded and the route reads MISSING, with no version field.
 3. The `seen` TTL is `max(7 days, 2 × freshness TTL)`, computed in `markFresh`.
-4. A note for D6: the healthcheck uses liveness, and the admin endpoint's lock behaviour is stated.
 **Generated:**
 - `RedisFreshnessAdapter`: fail-closed branches; `lastResult` captures `JacksonException | IllegalArgumentException | DomainException`, logs `outcome=CORRUPT`, deletes the key; `seenTtl(freshnessTtl)`; the class Javadoc rewritten.
 - Tests (`RedisFreshnessAdapterIT`, now 11): the outage contract; the concurrent-search IT; two corrupt-value ITs (garbage JSON, a removed provider name); two `seen` TTL ITs (4-day and 10-minute freshness TTLs).
 - `docs/SOLUTION.md` §6: the outage bullet rewritten.
-- `prompts/infrastructure/06-web-and-operations.md`: **created**, because the D6 prompt did not exist yet. It holds the two notes for D6 (liveness healthcheck; admin lock behaviour).
 **Decisions:**
 - **STALE when Redis is down, not MISSING.** MISSING would make the application aggregate synchronously, which is the herd we are removing. STALE with no lock serves the repository and schedules nothing, so the application needed no change. The cost: a route never aggregated before reads as STALE with an empty page, which is a claim of data that does not exist. This was accepted explicitly, and the SOLUTION bullet says it.
-- **Admin endpoint does not bypass the lock** (D6 note). Its consequence is that it cannot refresh during an outage. The conflict with the premise "the only way to refresh while Redis is down" is recorded as an open question for D6; a bypass would need its own deliberate decision.
 - **Corrupt values are deleted, not kept.** A value that cannot be decoded is worse than none, because it makes every search for that route fail until the seen TTL. Deletion is not atomic with a concurrent `markFresh`; see the review question below.
 - **No version field** in the stored shape, as the human chose. A future incompatible change would be handled the same way as corruption: discard and re-aggregate.
 **Human review / corrections:** The MAJOR herd finding was correct, and it was the AI's own design. The degraded-mode prompt asked for "tryLock returns a token", and the AI followed it without checking the load it creates. Mutation checks: restoring the fail-open `tryLock` made the outage IT and the concurrent IT fail (the aggregator was called); removing the corrupt handling made both corrupt-value ITs fail. Both restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 54 infrastructure unit tests, 46 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
-**Known limitations:** During an outage the service serves stale data indefinitely and cannot refresh until Redis is back. An operator who needs a refresh during an outage has no path yet (open question in the D6 note).
 **Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapterIT.java`, `docs/SOLUTION.md`, `flight-aggregator/prompts/infrastructure/06-web-and-operations.md`.
 
 ## 2026-11-14 — D4 follow-up: STALE contract in §8, compare-and-delete on discard
@@ -536,9 +532,48 @@ Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 applicat
 **Human review / corrections:** Both findings were correct. The discard race was a window of milliseconds, but the loss was silent, and it caused an unnecessary synchronous re-aggregation. Mutation check: with the unconditional `DEL` restored, the new IT failed; the Lua version was then restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 54 infrastructure unit tests, 47 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
 **Artifacts:** `flight-aggregator/docs/domain-model.md`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapter.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/cache/RedisFreshnessAdapterIT.java`.
 
-## 2026-11-14 — Correction: the D6 notes file was removed
+## 2026-11-14 — D5: Web API (search, admin aggregation, cursor codec, Problem Details)
 
-**Intent:** Correct the D4 follow-up entry above, which says `prompts/infrastructure/06-web-and-operations.md` was created.
-**Prompt (summary):** Human removed that file and asked to drop the commit that added it. The D6 prompt does not exist yet, so the notes it held were not kept.
-**Human review / corrections:** The file and its commit are removed from the branch. The two D6 notes (liveness healthcheck; the admin endpoint does not bypass the lock, with the open question about refreshing during an outage) are not in the repository; they must be written again in the D6 prompt when it is created. The `prompts/infrastructure/04-cache-freshness.md` commit is kept.
-**Artifacts:** none in the repository; `flight-aggregator/prompts/infrastructure/06-web-and-operations.md` no longer exists.
+**Intent:** Expose the search and admin aggregation over HTTP, with request validation, an opaque keyset cursor, RFC 9457 Problem Details, and light OpenAPI docs, keeping controllers dependent only on inbound ports.
+**Prompt (summary):** `flight-aggregator/prompts/infrastructure/05-web-api.md`: `GET /api/itineraries` and `POST /api/admin/aggregations`; a validated request record; response DTOs; `CursorCodec`; `ItineraryResponseMapper`; two controllers; `ApiExceptionHandler` (400/422/500); springdoc annotations; `@WebMvcTest` tests, a codec test, an aggregation controller test.
+**Generated:**
+- `web/`: `ItineraryController`, `AggregationController`, `ItinerariesApi`, `AggregationsApi`, `ItinerarySearchRequest`, `AggregationRequest`, `SearchRequestMapper`, `CursorCodec`, `InvalidCursorException`, `ApiExceptionHandler`; `web/dto/` (6 records); `web/mapper/ItineraryResponseMapper`.
+- `config/WebConfiguration` (the `SearchRequestMapper` bean); `config/AggregationProperties.referenceCurrency` and `reference-currency: ${REFERENCE_CURRENCY:EUR}` in `application.yaml`.
+- Tests: `ItineraryControllerTest` (11), `AggregationControllerTest` (2), `CursorCodecTest` (9), all with AssertJ (`MockMvcTester`), no Hamcrest.
+**Decisions:**
+- **Lowercase codes are accepted and normalised** (the prompt asked to decide): validation is `[A-Za-z]{3}` / `[A-Za-z0-9]{2}`, and `Airport.of` / `Carrier.of` uppercase. `origin=mad` means MAD; `origin=MADX` is 400.
+- **OpenAPI annotations live on interfaces (`ItinerariesApi`, `AggregationsApi`) that the controllers implement.** ArchUnit rule 5 allows controllers to depend only on inbound ports, the domain model, `web`, Spring, `jakarta.validation` and `java`; `io.swagger` is not in that list. Verified: `@Operation` placed directly on the controller made rule 5 fail.
+- **The cursor is `<amount>|<currency>|<itineraryKey>`**, not `<price>|<id>`: `PageCursor` holds a full `Price` (D2's currency check needs it), and pages are ordered by the Itinerary Key, not a database id. The cursor is opaque but not signed; a crafted one can only move its own caller within the results.
+- **`maxPrice` is in a new `aggregation.reference-currency`** (default EUR). Nothing configured a currency before; `OfferValidator` takes one in its constructor, so the same property will configure it when the use cases are wired.
+- **The admin endpoint answers 200 with the result**, not 202 (the prompt left it open; 200 is simpler for the demo).
+- **422 for `DomainException`, 400 for request shape.** Origin equal to destination passes validation (two valid codes) and is rejected by `SearchCriteria`, so it is 422.
+- **500 hides the exception:** the body has a `correlationId` and a generic detail; the exception and id are logged.
+- **Type-conversion errors read "has an invalid value"** instead of Spring's conversion message, which exposes Java type names.
+**Human review / corrections:** None yet. One compile error in the AI's test (`getContentAsString` declares `UnsupportedEncodingException`), fixed. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 36 application, 76 infrastructure unit tests, 47 ITs); `/check-arch` commands pass (ArchUnit 10/10; rules 4 and 5 included).
+**Known gaps:**
+- **The application does not start yet:** no configuration wires `SearchItinerariesService` / `AggregateFlightsService` (and `OfferValidator`, `ItineraryFactory`, `MarkupPolicy`). The web tests are slices with mocked use cases.
+- **OpenAPI is not verified at runtime** for the same reason: springdoc is not part of the `@WebMvcTest` slice, and the full context cannot start.
+- **The admin endpoint calls `AggregateFlightsUseCase` directly:** it neither takes the aggregation lock nor marks the route fresh. Sent to `domain-guardian` as a question.
+**Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/web/**`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/config/{WebConfiguration,AggregationProperties}.java`, `flight-aggregator/infrastructure/src/main/resources/application.yaml`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/web/**`, `flight-aggregator/prompts/infrastructure/05-web-api.md`.
+
+## 2026-11-14 — D5 follow-up: on-demand refresh use case, domain errors as 500, foreign-currency cursor
+
+**Intent:** Fix the MAJOR and two MINOR `domain-guardian` findings on D5. The MAJOR one was that the admin endpoint aggregated without the lock and without marking the route fresh, so a manual refresh was repeated by the next search.
+**Prompt (summary):** Human approved the AI's recommendations:
+1. A new inbound use case `RefreshItinerariesUseCase` (`Optional<AggregationResult> refresh(SearchCriteria)`), in `domain-model.md` §8 first, implemented as tryLock → aggregate → markFresh if any provider succeeded → release in a `finally`; the admin controller answers 409 when it is empty; the Redis-down consequence goes into `SOLUTION.md` §6.
+2. Wrap `DomainException` only while mapping the request (search and admin body), as a web `InvalidRequestException` → 422; any other `DomainException` → 500 with a correlation id and no domain message.
+3. Reject a cursor in another currency with 400.
+4. Keep the JSON field name `providers`.
+**Generated:**
+- `domain-model.md` §8: `RefreshItinerariesUseCase` and a paragraph on its lock and freshness rules.
+- `domain/port/in/RefreshItinerariesUseCase`; `application/RefreshItinerariesService` with `RefreshItinerariesServiceTest` (5).
+- `web/`: `InvalidRequestException` (422), `AggregationInProgressException` (409). `SearchRequestMapper` wraps domain failures in `criteria` and `filter`, and checks the cursor currency. `AggregationController` uses `RefreshItinerariesUseCase`. `ApiExceptionHandler` drops the blanket `DomainException` handler and adds 422 and 409 handlers. `AggregationsApi` documents 409 and 422.
+- Tests:
+  - `ItineraryControllerTest`: the old "use case throws DomainException → 422" test is replaced by "port throws `InvalidItineraryException` → 500 without the domain message", because the human changed the rule; a USD cursor test is added.
+  - `AggregationControllerTest`: a 409 test and a 422 body test are added.
+- `docs/SOLUTION.md` §6: with Redis down, a manual refresh also answers 409.
+**Decisions:**
+- An aggregation exception in `refresh` propagates after the lock is released; the search path swallows it to keep serving data. An operator who asked for a refresh should see that it failed, as a 500 with a correlation id.
+- `Optional` is used only as a return type, within AGENTS.md §6.
+**Human review / corrections:** The MAJOR finding came from the AI's D5 design: the prompt said "inject only `AggregateFlightsUseCase`", and the AI followed it without checking the lock and freshness rules in §8. The human approved adding a domain port to fix it. Mutation checks: with a blanket `DomainException → 422` handler restored temporarily, the new 500 test failed; without the cursor currency check, the USD cursor test failed. Both restored. Verified: `./mvnw -pl infrastructure -am verify` passes (223 domain, 41 application, 79 infrastructure unit tests, 47 ITs); `/check-arch` commands pass (ArchUnit 10/10). Not committed.
+**Artifacts:** `flight-aggregator/docs/domain-model.md`, `flight-aggregator/domain/src/main/java/io/github/jerojasol/flights/domain/port/in/RefreshItinerariesUseCase.java`, `flight-aggregator/application/src/main/java/io/github/jerojasol/flights/application/RefreshItinerariesService.java`, `flight-aggregator/application/src/test/java/io/github/jerojasol/flights/application/RefreshItinerariesServiceTest.java`, `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/web/{InvalidRequestException,AggregationInProgressException,SearchRequestMapper,AggregationController,AggregationsApi,ApiExceptionHandler}.java`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/web/{ItineraryControllerTest,AggregationControllerTest}.java`, `docs/SOLUTION.md`.

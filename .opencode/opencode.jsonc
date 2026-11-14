@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Repository-wide OpenCode configuration.
+  // AGENTS.md files are picked up automatically at each level.
+  // Project-specific agents, skills and commands live in each project's .opencode/ directory
+  // and are discovered when working inside that project:
+  //   flight-aggregator/.opencode/  -> domain-guardian agent, hexagonal-java & testing-conventions skills, /check-arch, /test-layer
+  //   mock-providers/.opencode/     -> contract-sync skill
+  //   .opencode/ (here)             -> /log-ai-decision
+  "permissions": [
+    { "action": "shell", "resource": "git push *", "effect": "ask" }
+  ]
+}

@@ -33,10 +33,11 @@ This is where normalisation lives:
 - **One bad itinerary never fails the response.** An itinerary that cannot be turned into an `Offer` is skipped and counted: return the domain's `ProviderResponse(List<Offer> offers, int unmappable)` (`domain-model.md` §8). The application counts `unmappable` as received and rejected for that provider (§9); there is no per-reason breakdown.
 - Nulls and structural problems are checked **explicitly**, before building anything: null entries, missing elements/attributes/fields, a Gamma line with the wrong field count. Never `catch (RuntimeException)`.
 - Catch only `DomainException`, the format's own parse exception, and the mapper's own structural-check exception (Beta's private `MalformedEntry`): `DateTimeParseException` (Alpha), `DateTimeException` for timestamps and IANA zones (Beta), `NumberFormatException` for cents and `DateTimeParseException` for `yyyyMMddHHmm` (Gamma).
-- **Three failure kinds, never mixed:**
+- **Four failure kinds, never mixed:**
   1. *One itinerary is bad* (dead leg, missing field, null entry, unreadable value, Gamma line with the wrong field count) → skipped and counted in `unmappable`. The response still succeeds.
   2. *The 2xx body as a whole breaks the contract* (unreadable JSON/XML, missing top-level element such as Beta's `Itineraries`, Gamma's header row missing or wrong) → throw `infrastructure.provider.ProviderContractViolation` from the parser or mapper. It becomes `ERROR`, is **not retried** (it would fail the same way), and the circuit breaker still records it.
-  3. *Transport failure* (non-2xx status, connection reset, read timeout, Gamma stream truncated before `#END`) → `ERROR`, retried.
+  3. *Our request was rejected* (HTTP 4xx other than 408 and 429) → `infrastructure.provider.ProviderRequestRejected`, built by `ProviderRestClients.httpError`. It becomes `ERROR`, is **not retried**, and the circuit breaker **ignores** it: the provider is healthy, the fault is in our request.
+  4. *Transport failure* (5xx, 408, 429, connection reset, read timeout, Gamma stream truncated before `#END` or before the header) → `ERROR`, retried.
 - Connection rules are not checked in the mapper; `OfferValidator` does that after mapping.
 
 ### 4. `{Provider}Client`
@@ -46,7 +47,7 @@ This is where normalisation lives:
 Wraps `client + mapper` with Resilience4j **programmatically**:
 - `TimeLimiter` (per-provider timeout from config) → on timeout `ProviderUnavailableException(TIMEOUT)`.
 - `CircuitBreaker` (sliding window 10, failure rate 50%, wait 30 s) → when open `ProviderUnavailableException(CIRCUIT_OPEN)`.
-- `Retry` (max 2 attempts, only on transport `ERROR`s: not on `TIMEOUT`, `CIRCUIT_OPEN` or `ProviderContractViolation`). This is already implemented in the shared `infrastructure.provider.ProviderResilience`; reuse it, together with `ProviderRestClients` for the HTTP client.
+- `Retry` (max 2 attempts, only on transport `ERROR`s: not on `TIMEOUT`, `CIRCUIT_OPEN`, `ProviderContractViolation` or `ProviderRequestRejected`). This is already implemented in the shared `infrastructure.provider.ProviderResilience`; reuse it, together with `ProviderRestClients` for the HTTP client.
 Order: `Retry(CircuitBreaker(TimeLimiter(call)))`. Use a dedicated `ScheduledExecutorService` or the shared virtual-thread executor for the time limiter.
 
 ### 6. Register in `ProviderConfiguration`

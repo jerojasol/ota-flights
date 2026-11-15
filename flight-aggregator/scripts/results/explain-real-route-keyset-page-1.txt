@@ -1,0 +1,12 @@
+-- Real route, keyset, page 1
+SELECT * FROM itineraries WHERE origin = 'MAD' AND destination = 'BCN' AND departure_date = DATE '2026-12-01' ORDER BY final_price, itinerary_key LIMIT 20;
+
+Limit  (cost=0.42..73.31 rows=20 width=474) (actual time=0.040..0.116 rows=20 loops=1)
+  Buffers: shared hit=23
+  ->  Index Scan using ix_itineraries_search on itineraries  (cost=0.42..2551.42 rows=700 width=474) (actual time=0.039..0.114 rows=20 loops=1)
+        Index Cond: ((origin = 'MAD'::bpchar) AND (destination = 'BCN'::bpchar) AND (departure_date = '2026-12-01'::date))
+        Buffers: shared hit=23
+Planning:
+  Buffers: shared hit=227
+Planning Time: 1.255 ms
+Execution Time: 0.220 ms

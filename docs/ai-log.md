@@ -796,3 +796,27 @@ Not verified in a real browser by the agent. Not committed.
 - `README.md`: the resilience block uses `errorRate` 0.5. It describes partial failures as the usual outcome, and says a refresh in which all three fail leaves the stored results and statuses unchanged.
 **Human review / corrections:** All decisions are the human's. The human's note said to replace 0.7, but the README draft actually used 1.0; it was changed to 0.5 as decided. Verified: frontend has 35 tests passing, lint is clean and the build succeeds. `./mvnw verify` in `flight-aggregator` passed (406 tests including 49 ITs, 0 failures). Stack rebuilt (frontend on 3001, because 3000 is still held by `ota-frontend-local`); smoke test all PASS, and the served bundle contains both new strings. The dashboard was not checked visually (no browser available). Not committed.
 **Artifacts:** `flight-aggregator/infrastructure/src/main/java/io/github/jerojasol/flights/infrastructure/web/dto/ItineraryPageResponse.java`, `frontend/src/components/ProviderPanel.tsx`, `frontend/src/components/SearchResults.tsx`, `frontend/src/freshness.test.tsx`, `docs/SOLUTION.md`, `README.md`, `docs/ai-log.md`.
+
+## 2026-11-15 — E1: 1M-row seed and keyset vs. offset measurement
+
+**Intent:** Produce the evidence for the pagination section of `SOLUTION.md` (§4.3).
+**Prompt (summary):** `prompts/delivery/01-perf-seed-and-measurement.md`: an idempotent `generate_series` seed of 1M rows, a runner that takes the median of 5 runs of keyset and offset queries (first page and deep page), the results recorded in §4.3 and the raw `EXPLAIN` output committed.
+**Generated:** `seed-1m.sql` (TRUNCATE + RESTART IDENTITY, `setseed(0.42)`, 50 pairs × 30 dates, 1–3 JSONB segments, sha256 keys, ANALYZE; about 51 s). `measure-pagination.sh` (local psql via `DB_URL`, or `docker exec` when there is no local psql) and three plan files in `scripts/results/`. A Measurements table in §4.3.
+**Human review / corrections:** Two departures from the prompt, both flagged to the human:
+- The prompt orders by `(final_price, id)`. The script uses `(final_price, itinerary_key)` because that is the order in the actual index and the order `PageCursor` defines. The §4.3 placeholder still says `id`.
+- With ~667 rows per route and date, a page at row 900,000 inside one route cannot exist. Keyset and offset are both measured at the end of the route (0.78 ms vs. 7.18 ms), and offset is also measured at global `OFFSET 900000` (2.09 s, external sort). The script prints this explanation.
+The seed truncated the local stack's `itineraries` table (3,683 aggregated rows). Not committed.
+**Follow-up (same day, human review of E1):** The human accepted both deviations and asked for a fair comparison:
+1. **Unfiltered `OFFSET 900000` moved to a note.** It has no usable index, so most of its cost is a full-table sort, and the API never issues it.
+2. **Synthetic deep route added.** The seed now puts 200,000 of the 1M rows on one artificial route, `ZZA`–`ZZB` on 2026-12-01. The other 800,000 rows give about 533 per real pair and date. The script measures each route at page 1 and near its end, reports the median time and the top-node shared buffers, and writes every plan to `scripts/results/`, replacing the old plan files.
+   - Deep route, keyset at row 190,000: 0.62 ms, 24 buffers.
+   - Deep route, offset at row 190,000: 400 ms, 16,489 buffers.
+   - **Index use (AI finding, raised by the AI).** For the large `OFFSET`, the planner did not walk `ix_itineraries_search` in order. It used the index as a bitmap and then ran an external sort. To keep the comparison like-for-like, the script adds a variant that disables bitmap scans, sequential scans and sorts: 175 ms and 193,370 buffers through the same index.
+3. **§4.3 rewritten.**
+   - A real route holds a few hundred rows, so both techniques are fast there.
+   - Keyset was chosen because its cost does not grow with depth, because pages stay stable during upserts, and because it needs no count.
+   - The placeholder now says `(final_price, itinerary_key)`.
+   - **Wording (AI correction before reporting).** The AI's first draft said offset would *skip* rows when a price goes up. The upsert only lowers prices and never deletes, so the realistic failure is a *repeated* row. §4.3 now says that.
+
+Afterwards: `docker compose down -v && docker compose up -d`. Port 3000 is held by `ota-frontend-local`, so the frontend was started with `FRONTEND_PORT=3001`. All services were healthy, and real aggregations had already started repopulating the table. Not committed.
+**Artifacts:** `flight-aggregator/scripts/seed-1m.sql`, `flight-aggregator/scripts/measure-pagination.sh`, `flight-aggregator/scripts/results/`, `docs/SOLUTION.md`, `docs/ai-log.md`.

@@ -820,3 +820,28 @@ The seed truncated the local stack's `itineraries` table (3,683 aggregated rows)
 
 Afterwards: `docker compose down -v && docker compose up -d`. Port 3000 is held by `ota-frontend-local`, so the frontend was started with `FRONTEND_PORT=3001`. All services were healthy, and real aggregations had already started repopulating the table. Not committed.
 **Artifacts:** `flight-aggregator/scripts/seed-1m.sql`, `flight-aggregator/scripts/measure-pagination.sh`, `flight-aggregator/scripts/results/`, `docs/SOLUTION.md`, `docs/ai-log.md`.
+
+## 2026-11-15 — E0: Reorganise the domain packages
+
+**Intent:** Split the flat `domain.model` package (40 types) into `model`, `service`, `search`, `aggregation` and `exception`, without changing behaviour.
+**Prompt (summary):** `flight-aggregator/prompts/domain/06-reorganise-domain-packages.md`: a move-only refactor using `git mv`, updating only `package` and `import` lines. Tests follow the class they test. Two new ArchUnit rules, with proof that one of them fails on a violation. The controller rule is widened to `search` and `aggregation`. Docs updated, stack rebuilt, smoke test run.
+**Generated:**
+- 28 main types and 10 tests moved with `git mv`; all 38 show as renames. `package` and `import` lines were updated across domain, application and infrastructure.
+- New ArchUnit rules `model_does_not_depend_on_service_search_or_aggregation` and `aggregation_does_not_depend_on_search_or_service`.
+- Controller rule extended to `..domain.search..` and `..domain.aggregation..`.
+- New "Package layout" subsection in `domain-model.md` §7. Updates to `AGENTS.md` §3, `domain-guardian.md` and `hexagonal-java/SKILL.md`.
+**Human review / corrections:**
+- **The one exception to "move only" (human decision).** `OfferValidator` calls `Itinerary.findViolation` and `Itinerary.Violation`. Both were package-private and only worked because the classes shared a package. The AI stopped at the compile error and offered three options. The human chose to make both `public`, changing nothing else about them, and to rewrite the Javadoc of `findViolation`: it is the single implementation of I1–I9, used by `Itinerary`'s own factories and by `OfferValidator`, which needs a result instead of an exception. `domain-model.md` §7 records why it is public.
+- **A second non-import edit (AI, needed to pass the acceptance grep).** The Javadoc `@throws` in `FlightProviderPort` named `domain.model.ProviderUnavailableException` by its full name. It now says `domain.exception`.
+- **Diff check.** No other non-`package`/`import` line changed in Java files, apart from `ArchitectureTest`. Checked by running `git diff HEAD -M -U0` and filtering out `package`, `import` and blank lines.
+- **AI mistakes along the way:**
+  - The first import-rewriting script stripped comments with `//.*` in DOTALL mode, so it missed imports. The compiler caught it and a second pass fixed it.
+  - The second pass falsely matched `Itinerary` inside an XML text block in `BetaOfferMapperTest`. The extra import was removed by hand.
+  - A `git reset` briefly unstaged the renames, so the domain tree was restaged.
+- **Rule proof.** A temporary `OfferValidator.class` field was added to `Price`. `model_does_not_depend_on_service_search_or_aggregation` failed with "Static Initializer <...model.Price.<clinit>()> references class object <...service.OfferValidator>". The probe was then reverted.
+- **Test counts.** The first baseline reported 51 ITs, but stale `KeysetPaginationPerfIT` reports had inflated it; that run was not `clean`. A `clean verify` on unchanged `HEAD` gave 41 / 223 / 91 / 49 (application, domain, infrastructure unit, infrastructure IT). After the move: 41 / 223 / 93 / 49. The +2 are the two new ArchUnit rules. No test was deleted, skipped or changed in its assertions.
+- **domain-guardian:** 0 critical, 0 major, 2 minor, both left for the human:
+  - `OfferValidator`'s `{@link Segment}` and `{@link InvalidSegmentException#reason()}` no longer resolve in Javadoc. Fixing them would be another non-import change.
+  - The `service` → `search`/`aggregation` direction and the `search` → `service` direction have no ArchUnit rule.
+- Image rebuilt; `scripts/smoke.sh` all PASS. Not committed (branch `refactor/domain-packages`).
+**Artifacts:** `flight-aggregator/domain/src/`, `flight-aggregator/application/src/`, `flight-aggregator/infrastructure/src/`, `flight-aggregator/infrastructure/src/test/java/io/github/jerojasol/flights/infrastructure/ArchitectureTest.java`, `flight-aggregator/docs/domain-model.md`, `flight-aggregator/AGENTS.md`, `flight-aggregator/.opencode/agents/domain-guardian.md`, `flight-aggregator/.opencode/skills/hexagonal-java/SKILL.md`, `docs/ai-log.md`.

@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidOfferException;
 import static io.github.jerojasol.flights.domain.Fixtures.IB6251;
 import static io.github.jerojasol.flights.domain.Fixtures.JFK;
 import static io.github.jerojasol.flights.domain.Fixtures.MAD;

@@ -1,17 +1,17 @@
 package io.github.jerojasol.flights.application;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
-import io.github.jerojasol.flights.domain.model.Freshness;
-import io.github.jerojasol.flights.domain.model.ItineraryFilter;
-import io.github.jerojasol.flights.domain.model.ItineraryPage;
-import io.github.jerojasol.flights.domain.model.LockToken;
-import io.github.jerojasol.flights.domain.model.PageCursor;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
-import io.github.jerojasol.flights.domain.model.SearchResult;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
 import io.github.jerojasol.flights.domain.port.in.AggregateFlightsUseCase;
 import io.github.jerojasol.flights.domain.port.in.SearchItinerariesUseCase;
 import io.github.jerojasol.flights.domain.port.out.FreshnessPort;
 import io.github.jerojasol.flights.domain.port.out.ItineraryRepositoryPort;
+import io.github.jerojasol.flights.domain.search.Freshness;
+import io.github.jerojasol.flights.domain.search.ItineraryFilter;
+import io.github.jerojasol.flights.domain.search.ItineraryPage;
+import io.github.jerojasol.flights.domain.search.LockToken;
+import io.github.jerojasol.flights.domain.search.PageCursor;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
+import io.github.jerojasol.flights.domain.search.SearchResult;
 
 import java.time.Duration;
 import java.util.Map;

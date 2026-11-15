@@ -7,10 +7,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.jerojasol.flights.application.fakes.InMemoryFreshness;
 import io.github.jerojasol.flights.application.fakes.RecordingAggregator;
-import io.github.jerojasol.flights.domain.model.AggregationResult;
-import io.github.jerojasol.flights.domain.model.Freshness;
-import io.github.jerojasol.flights.domain.model.ProviderOutcome;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.ProviderOutcome;
+import io.github.jerojasol.flights.domain.aggregation.ProviderStatus;
+import io.github.jerojasol.flights.domain.search.Freshness;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;

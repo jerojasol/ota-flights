@@ -2,12 +2,12 @@ package io.github.jerojasol.flights.infrastructure.scheduling;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.ProviderOutcome;
+import io.github.jerojasol.flights.domain.aggregation.ProviderStatus;
 import io.github.jerojasol.flights.domain.model.Airport;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderOutcome;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;

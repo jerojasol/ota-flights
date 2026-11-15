@@ -3,12 +3,12 @@ package io.github.jerojasol.flights.infrastructure.provider.gamma;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.jerojasol.flights.domain.aggregation.ProviderResponse;
 import io.github.jerojasol.flights.domain.model.Airport;
 import io.github.jerojasol.flights.domain.model.FlightNumber;
 import io.github.jerojasol.flights.domain.model.Offer;
 import io.github.jerojasol.flights.domain.model.Price;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderResponse;
 import io.github.jerojasol.flights.domain.model.Segment;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderContractViolation;
 import io.github.jerojasol.flights.infrastructure.provider.gamma.GammaStreamReader.TruncatedStream;

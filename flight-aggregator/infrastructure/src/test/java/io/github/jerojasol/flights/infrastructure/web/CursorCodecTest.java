@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.jerojasol.flights.domain.model.ItineraryKey;
-import io.github.jerojasol.flights.domain.model.PageCursor;
 import io.github.jerojasol.flights.domain.model.Price;
+import io.github.jerojasol.flights.domain.search.PageCursor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;

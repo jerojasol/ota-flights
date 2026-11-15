@@ -12,11 +12,11 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
+import io.github.jerojasol.flights.domain.aggregation.ProviderResponse;
+import io.github.jerojasol.flights.domain.aggregation.ProviderStatus;
+import io.github.jerojasol.flights.domain.exception.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.model.Airport;
-import io.github.jerojasol.flights.domain.model.ProviderResponse;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
-import io.github.jerojasol.flights.domain.model.ProviderUnavailableException;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderContractViolation;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderRequestRejected;
 import io.github.jerojasol.flights.infrastructure.provider.ResilienceSettings;

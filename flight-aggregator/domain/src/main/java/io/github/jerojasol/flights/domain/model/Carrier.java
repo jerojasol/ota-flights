@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidCarrierException;
 import java.util.Locale;
 import java.util.regex.Pattern;
 

@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidPriceException;
 import java.math.BigDecimal;
 
 /** {@code final = base × (1 + percentage/100)}, rounded HALF_EVEN to scale 2 by {@link Price#multiply}. */

@@ -1,7 +1,7 @@
 package io.github.jerojasol.flights.domain.port.in;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 
 public interface AggregateFlightsUseCase {
 

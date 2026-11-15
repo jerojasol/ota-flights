@@ -1,6 +1,6 @@
 package io.github.jerojasol.flights.infrastructure.cache;
 
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 
 import java.time.format.DateTimeFormatter;
 

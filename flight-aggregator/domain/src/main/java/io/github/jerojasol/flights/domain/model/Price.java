@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidPriceException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Currency;

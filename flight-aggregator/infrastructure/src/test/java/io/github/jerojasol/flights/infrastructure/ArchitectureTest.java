@@ -51,10 +51,26 @@ class ArchitectureTest {
             .allowEmptyShould(true);
 
     @ArchTest
+    static final ArchRule model_does_not_depend_on_service_search_or_aggregation = noClasses()
+            .that().resideInAPackage("io.github.jerojasol.flights.domain.model..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "io.github.jerojasol.flights.domain.service..",
+                    "io.github.jerojasol.flights.domain.search..",
+                    "io.github.jerojasol.flights.domain.aggregation..");
+
+    @ArchTest
+    static final ArchRule aggregation_does_not_depend_on_search_or_service = noClasses()
+            .that().resideInAPackage("io.github.jerojasol.flights.domain.aggregation..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "io.github.jerojasol.flights.domain.search..",
+                    "io.github.jerojasol.flights.domain.service..");
+
+    @ArchTest
     static final ArchRule controllers_depend_only_on_inbound_ports_and_web = classes()
             .that().haveSimpleNameEndingWith("Controller")
             .should().onlyDependOnClassesThat().resideInAnyPackage(
-                    "..domain.port.in..", "..domain.model..", "..infrastructure.web..",
+                    "..domain.port.in..", "..domain.model..", "..domain.search..", "..domain.aggregation..",
+                    "..infrastructure.web..",
                     "org.springframework..", "jakarta.validation..", "java..")
             .allowEmptyShould(true);
 

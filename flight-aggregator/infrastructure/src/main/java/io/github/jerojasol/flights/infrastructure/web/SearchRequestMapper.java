@@ -1,12 +1,12 @@
 package io.github.jerojasol.flights.infrastructure.web;
 
+import io.github.jerojasol.flights.domain.exception.DomainException;
 import io.github.jerojasol.flights.domain.model.Airport;
 import io.github.jerojasol.flights.domain.model.Carrier;
-import io.github.jerojasol.flights.domain.model.DomainException;
-import io.github.jerojasol.flights.domain.model.ItineraryFilter;
-import io.github.jerojasol.flights.domain.model.PageCursor;
 import io.github.jerojasol.flights.domain.model.Price;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.search.ItineraryFilter;
+import io.github.jerojasol.flights.domain.search.PageCursor;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 
 import java.time.LocalDate;
 import java.util.Currency;

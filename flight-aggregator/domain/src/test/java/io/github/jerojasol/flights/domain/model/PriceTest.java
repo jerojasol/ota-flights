@@ -5,6 +5,7 @@ import static io.github.jerojasol.flights.domain.Fixtures.price;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.jerojasol.flights.domain.exception.InvalidPriceException;
 import java.math.BigDecimal;
 import java.util.Currency;
 

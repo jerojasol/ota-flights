@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidItineraryException;
 import static io.github.jerojasol.flights.domain.Fixtures.BA;
 import static io.github.jerojasol.flights.domain.Fixtures.IB;
 import static io.github.jerojasol.flights.domain.Fixtures.IB4120;

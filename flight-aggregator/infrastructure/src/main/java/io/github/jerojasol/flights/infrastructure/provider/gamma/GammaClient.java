@@ -1,7 +1,7 @@
 package io.github.jerojasol.flights.infrastructure.provider.gamma;
 
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderRestClients;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;

@@ -1,10 +1,10 @@
 package io.github.jerojasol.flights.application.fakes;
 
+import io.github.jerojasol.flights.domain.aggregation.ProviderResponse;
 import io.github.jerojasol.flights.domain.model.Offer;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderResponse;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.domain.port.out.FlightProviderPort;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 
 import java.time.Duration;
 import java.util.List;

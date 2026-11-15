@@ -1,9 +1,9 @@
 package io.github.jerojasol.flights.domain.port.out;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
-import io.github.jerojasol.flights.domain.model.Freshness;
-import io.github.jerojasol.flights.domain.model.LockToken;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
+import io.github.jerojasol.flights.domain.search.Freshness;
+import io.github.jerojasol.flights.domain.search.LockToken;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 
 import java.time.Duration;
 import java.util.Optional;

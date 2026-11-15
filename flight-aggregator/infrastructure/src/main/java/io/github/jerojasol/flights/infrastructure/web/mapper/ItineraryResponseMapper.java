@@ -1,12 +1,12 @@
 package io.github.jerojasol.flights.infrastructure.web.mapper;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.ProviderOutcome;
 import io.github.jerojasol.flights.domain.model.Itinerary;
 import io.github.jerojasol.flights.domain.model.Price;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderOutcome;
-import io.github.jerojasol.flights.domain.model.SearchResult;
 import io.github.jerojasol.flights.domain.model.Segment;
+import io.github.jerojasol.flights.domain.search.SearchResult;
 import io.github.jerojasol.flights.infrastructure.web.CursorCodec;
 import io.github.jerojasol.flights.infrastructure.web.dto.AggregationResponse;
 import io.github.jerojasol.flights.infrastructure.web.dto.ItineraryPageResponse;

@@ -1,14 +1,14 @@
 package io.github.jerojasol.flights.infrastructure.cache;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
-import io.github.jerojasol.flights.domain.model.DomainException;
-import io.github.jerojasol.flights.domain.model.Freshness;
-import io.github.jerojasol.flights.domain.model.LockToken;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.ProviderOutcome;
+import io.github.jerojasol.flights.domain.aggregation.ProviderStatus;
+import io.github.jerojasol.flights.domain.exception.DomainException;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderOutcome;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.domain.port.out.FreshnessPort;
+import io.github.jerojasol.flights.domain.search.Freshness;
+import io.github.jerojasol.flights.domain.search.LockToken;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;

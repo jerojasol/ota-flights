@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidOfferException;
 import java.util.List;
 
 public record Offer(Provider provider, List<Segment> segments, Price basePrice) {

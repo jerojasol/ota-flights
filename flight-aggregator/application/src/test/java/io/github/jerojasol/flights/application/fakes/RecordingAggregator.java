@@ -1,8 +1,8 @@
 package io.github.jerojasol.flights.application.fakes;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
 import io.github.jerojasol.flights.domain.port.in.AggregateFlightsUseCase;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 
 import java.util.concurrent.atomic.AtomicInteger;
 

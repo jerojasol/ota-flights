@@ -10,6 +10,7 @@ import static io.github.jerojasol.flights.domain.Fixtures.segment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.jerojasol.flights.domain.exception.InvalidItineraryKeyException;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;

@@ -1,21 +1,21 @@
 package io.github.jerojasol.flights.application;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.ProviderOutcome;
+import io.github.jerojasol.flights.domain.aggregation.ProviderResponse;
+import io.github.jerojasol.flights.domain.aggregation.ProviderStatus;
+import io.github.jerojasol.flights.domain.exception.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.model.Itinerary;
-import io.github.jerojasol.flights.domain.model.ItineraryDeduplicator;
-import io.github.jerojasol.flights.domain.model.ItineraryFactory;
 import io.github.jerojasol.flights.domain.model.Offer;
-import io.github.jerojasol.flights.domain.model.OfferValidator;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderOutcome;
-import io.github.jerojasol.flights.domain.model.ProviderResponse;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
-import io.github.jerojasol.flights.domain.model.ProviderUnavailableException;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
-import io.github.jerojasol.flights.domain.model.ValidationSummary;
 import io.github.jerojasol.flights.domain.port.in.AggregateFlightsUseCase;
 import io.github.jerojasol.flights.domain.port.out.FlightProviderPort;
 import io.github.jerojasol.flights.domain.port.out.ItineraryRepositoryPort;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
+import io.github.jerojasol.flights.domain.service.ItineraryDeduplicator;
+import io.github.jerojasol.flights.domain.service.ItineraryFactory;
+import io.github.jerojasol.flights.domain.service.OfferValidator;
+import io.github.jerojasol.flights.domain.service.ValidationSummary;
 
 import java.time.Clock;
 import java.time.Duration;

@@ -3,7 +3,7 @@ package io.github.jerojasol.flights.infrastructure.cache;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.github.jerojasol.flights.domain.model.Airport;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;

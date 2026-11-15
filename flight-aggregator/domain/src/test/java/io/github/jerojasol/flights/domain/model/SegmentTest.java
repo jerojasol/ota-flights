@@ -8,6 +8,7 @@ import static io.github.jerojasol.flights.domain.Fixtures.instant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.jerojasol.flights.domain.exception.InvalidSegmentException;
 import java.time.Duration;
 import java.time.Instant;
 

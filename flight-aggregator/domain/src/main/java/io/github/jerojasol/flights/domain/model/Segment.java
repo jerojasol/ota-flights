@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidSegmentException;
 import java.time.Duration;
 import java.time.Instant;
 

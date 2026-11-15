@@ -6,13 +6,13 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.ProviderOutcome;
+import io.github.jerojasol.flights.domain.aggregation.ProviderStatus;
 import io.github.jerojasol.flights.domain.model.Airport;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderOutcome;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.domain.port.in.RefreshItinerariesUseCase;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;

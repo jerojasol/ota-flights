@@ -5,8 +5,8 @@ import io.github.jerojasol.flights.domain.model.FlightNumber;
 import io.github.jerojasol.flights.domain.model.Offer;
 import io.github.jerojasol.flights.domain.model.Price;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.domain.model.Segment;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 
 import java.time.Instant;
 import java.time.LocalDate;

@@ -1,9 +1,9 @@
 package io.github.jerojasol.flights.infrastructure.web;
 
-import io.github.jerojasol.flights.domain.model.DomainException;
+import io.github.jerojasol.flights.domain.exception.DomainException;
 import io.github.jerojasol.flights.domain.model.ItineraryKey;
-import io.github.jerojasol.flights.domain.model.PageCursor;
 import io.github.jerojasol.flights.domain.model.Price;
+import io.github.jerojasol.flights.domain.search.PageCursor;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;

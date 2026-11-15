@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidItineraryException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -64,15 +65,16 @@ public final class Itinerary {
     }
 
     /** A broken structural rule: which one, and a human-readable detail. */
-    record Violation(RejectionReason reason, String message) {
+    public record Violation(RejectionReason reason, String message) {
     }
 
     /**
-     * Single source of the structural rules, shared with {@link OfferValidator}. Total: never throws, returns the
-     * first violation in the documented order: I1, I2, I4, then per consecutive pair in segment order I5, I6, I7, I8,
-     * and finally I9.
+     * The single implementation of the structural invariants I1–I9. Used by this class's own factories, which turn a
+     * violation into an exception, and by {@code domain.service.OfferValidator}, which needs a result instead of an
+     * exception. Total: never throws, returns the first violation in the documented order: I1, I2, I4, then per
+     * consecutive pair in segment order I5, I6, I7, I8, and finally I9.
      */
-    static Optional<Violation> findViolation(List<Segment> segments) {
+    public static Optional<Violation> findViolation(List<Segment> segments) {
         if (segments == null || segments.isEmpty()) {
             return Optional.of(new Violation(RejectionReason.NO_SEGMENTS, "Itinerary has no segments"));
         }

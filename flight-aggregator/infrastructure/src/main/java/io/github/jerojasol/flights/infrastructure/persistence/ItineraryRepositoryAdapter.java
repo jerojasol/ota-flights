@@ -2,12 +2,12 @@ package io.github.jerojasol.flights.infrastructure.persistence;
 
 import io.github.jerojasol.flights.domain.model.Carrier;
 import io.github.jerojasol.flights.domain.model.Itinerary;
-import io.github.jerojasol.flights.domain.model.ItineraryFilter;
-import io.github.jerojasol.flights.domain.model.ItineraryPage;
-import io.github.jerojasol.flights.domain.model.PageCursor;
 import io.github.jerojasol.flights.domain.model.Price;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.domain.port.out.ItineraryRepositoryPort;
+import io.github.jerojasol.flights.domain.search.ItineraryFilter;
+import io.github.jerojasol.flights.domain.search.ItineraryPage;
+import io.github.jerojasol.flights.domain.search.PageCursor;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;

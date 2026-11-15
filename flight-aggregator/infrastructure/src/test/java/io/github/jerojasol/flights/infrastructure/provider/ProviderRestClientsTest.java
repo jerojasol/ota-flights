@@ -2,9 +2,9 @@ package io.github.jerojasol.flights.infrastructure.provider;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.jerojasol.flights.domain.aggregation.ProviderStatus;
+import io.github.jerojasol.flights.domain.exception.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
-import io.github.jerojasol.flights.domain.model.ProviderUnavailableException;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 

@@ -2,19 +2,19 @@ package io.github.jerojasol.flights.application;
 
 import io.github.jerojasol.flights.application.fakes.InMemoryItineraryRepository;
 import io.github.jerojasol.flights.application.fakes.StubProvider;
-import io.github.jerojasol.flights.domain.model.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
+import io.github.jerojasol.flights.domain.aggregation.ProviderOutcome;
+import io.github.jerojasol.flights.domain.aggregation.ProviderStatus;
+import io.github.jerojasol.flights.domain.exception.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.model.Itinerary;
-import io.github.jerojasol.flights.domain.model.ItineraryDeduplicator;
-import io.github.jerojasol.flights.domain.model.ItineraryFactory;
 import io.github.jerojasol.flights.domain.model.Offer;
-import io.github.jerojasol.flights.domain.model.OfferValidator;
 import io.github.jerojasol.flights.domain.model.PercentageMarkupPolicy;
 import io.github.jerojasol.flights.domain.model.Price;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderOutcome;
-import io.github.jerojasol.flights.domain.model.ProviderStatus;
-import io.github.jerojasol.flights.domain.model.ProviderUnavailableException;
 import io.github.jerojasol.flights.domain.port.out.FlightProviderPort;
+import io.github.jerojasol.flights.domain.service.ItineraryDeduplicator;
+import io.github.jerojasol.flights.domain.service.ItineraryFactory;
+import io.github.jerojasol.flights.domain.service.OfferValidator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 

@@ -1,8 +1,8 @@
 package io.github.jerojasol.flights.infrastructure.observability;
 
-import io.github.jerojasol.flights.domain.model.AggregationResult;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
+import io.github.jerojasol.flights.domain.aggregation.AggregationResult;
 import io.github.jerojasol.flights.domain.port.in.AggregateFlightsUseCase;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

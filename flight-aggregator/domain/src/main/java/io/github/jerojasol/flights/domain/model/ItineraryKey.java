@@ -1,5 +1,6 @@
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidItineraryKeyException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;

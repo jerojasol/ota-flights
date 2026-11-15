@@ -1,8 +1,8 @@
 package io.github.jerojasol.flights.infrastructure.scheduling;
 
 import io.github.jerojasol.flights.domain.model.Airport;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.domain.port.in.RefreshItinerariesUseCase;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;

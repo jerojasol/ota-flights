@@ -1,9 +1,9 @@
 package io.github.jerojasol.flights.infrastructure.provider.beta;
 
+import io.github.jerojasol.flights.domain.aggregation.ProviderResponse;
 import io.github.jerojasol.flights.domain.model.Provider;
-import io.github.jerojasol.flights.domain.model.ProviderResponse;
-import io.github.jerojasol.flights.domain.model.SearchCriteria;
 import io.github.jerojasol.flights.domain.port.out.FlightProviderPort;
+import io.github.jerojasol.flights.domain.search.SearchCriteria;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderCircuitState;
 import io.github.jerojasol.flights.infrastructure.provider.ProviderResilience;
 import io.github.jerojasol.flights.infrastructure.provider.ResilienceSettings;

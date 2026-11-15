@@ -188,7 +188,7 @@ Each provider package has its own DTOs (raw strings), parser, mapper and client.
 
 The large-scale design was the human's. The AI worked inside it.
 
-- **The domain model:** the aggregate, value objects, invariants, Ubiquitous Language and ports in `domain-model.md`. Where the AI proposed a change, it went into the document only after the human approved it.
+- **The domain model:** the aggregate, value objects, invariants, Ubiquitous Language and ports in `domain-model.md` (diagram: [`docs/domain.mmd`](docs/domain.mmd)). Where the AI proposed a change, it went into the document only after the human approved it.
 - **The overall architecture:** hexagonal with a framework-free domain, the read path and write path split (§2.2), Postgres as the store, and Redis used only for freshness and locking.
 - **The tools:** the stack (Java 21, Spring Boot, PostgreSQL, Redis, Resilience4j, React) and the AI tooling (§3.1): which agents, skills and commands to have and where each one lives.
 - **The method:** documents as sources of truth before the code, one prompt per step, the review loop and the running log.

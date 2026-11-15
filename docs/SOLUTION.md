@@ -55,7 +55,51 @@ _`itineraries` table, `itinerary_key` unique, `segments` JSONB, denormalised sea
 _`ItineraryKey` canonical form; what is included and excluded and why._
 
 ### 4.3 Keyset vs. offset
-_Offset cost at 1M rows; keyset on `(final_price, id)` with covering index; opaque Base64 cursor; what keyset gives up (random page access, total count) and why that is acceptable for a flight search UI. Measurements from the 1M-row seed._
+_Opaque Base64 cursor; what keyset gives up (random page access, total count) and why that is acceptable for a flight search UI._
+
+Pages are ordered by `(final_price, itinerary_key)`, which is the suffix of `ix_itineraries_search` after the equality prefix `(origin, destination, departure_date)`. `itinerary_key` is unique, so it breaks ties and makes the order total.
+
+**What the numbers show.** A real route holds a few hundred rows for each origin, destination and date. At that size, keyset and offset are both fast on every page (under 3 ms). The difference only appears at depth: on a route with 200,000 rows, an offset page near the end costs 175 to 400 ms, while a keyset page costs the same as page 1.
+
+**Why keyset anyway.** Keyset was chosen for three reasons:
+- Its cost does not grow with page depth.
+- Pages stay stable while background refreshes upsert rows. With offset, a cheaper itinerary that arrives between two page requests lands before the current position and pushes every later row back one place, so the next page repeats an itinerary that was already shown. Offset would skip an itinerary if a row before the current position disappeared; today the upsert only lowers prices and never deletes, so that case does not occur. A keyset cursor resumes after the last `(final_price, itinerary_key)` the client saw, so it does not repeat or skip because of rows inserted or moved before that point. The newly arrived cheaper itinerary is simply not shown in that pass.
+- It needs no `COUNT(*)`.
+
+#### Measurements
+
+Machine: Apple M1 Pro, Docker Desktop with 4 CPUs and 7.7 GiB of memory, PostgreSQL 16 (compose image), warm cache.
+Data: 1,000,000 rows from `flight-aggregator/scripts/seed-1m.sql`.
+- 800,000 rows over 50 real origin/destination pairs (15 airports × 30 dates), about 533 rows per pair and date.
+- One synthetic deep route `ZZA`–`ZZB` on 2026-12-01 with 200,000 rows. The codes are deliberately artificial. It exists only so that both techniques can be compared at depth with the same filtered query and the same index.
+
+The seed takes under a minute.
+
+```bash
+docker compose up -d postgres
+docker exec -i ota-flights-postgres-1 psql -U flights -d flights < flight-aggregator/scripts/seed-1m.sql
+flight-aggregator/scripts/measure-pagination.sh      # or DB_URL=postgres://… with a local psql
+```
+
+Every query filters by origin, destination and date and orders by `final_price, itinerary_key` with `LIMIT 20`, which is the shape the API issues. "Time" is the median `EXPLAIN ANALYZE` execution time over 5 runs. "Buffers" counts the shared buffers (hit + read) of the top plan node. The plans are in `flight-aggregator/scripts/results/`.
+
+| Route | Query | Time (ms) | Buffers | Plan |
+|---|---|---|---|---|
+| MAD–BCN (533 rows) | Keyset, page 1 | 0.22 | 23 | Index Scan `ix_itineraries_search` |
+| | Keyset, row 513 | 0.23 | 23 | Index Scan `ix_itineraries_search` |
+| | Offset, page 1 | 0.22 | 23 | Index Scan `ix_itineraries_search` |
+| | Offset, row 513 | 2.70 | 546 | Index Scan `ix_itineraries_search` |
+| ZZA–ZZB (200,000 rows) | Keyset, page 1 | 0.48 | 24 | Index Scan `ix_itineraries_search` |
+| | Keyset, row 190,000 | 0.62 | 24 | Index Scan `ix_itineraries_search` |
+| | Offset, page 1 | 0.44 | 24 | Index Scan `ix_itineraries_search` |
+| | Offset, row 190,000 (planner's choice) | 399.6 | 16,489 | Bitmap Index Scan `ix_itineraries_search` → Bitmap Heap Scan + external sort |
+| | Offset, row 190,000 (ordered index scan forced) | 174.9 | 193,370 | Index Scan `ix_itineraries_search` |
+
+For a large `OFFSET`, the planner reads the route through the index as a bitmap and then sorts it. The forced row disables bitmap scans, sequential scans and sorts, so the comparison also covers offset walking the same ordered index as keyset. In both variants, offset reads and discards every preceding row: about 8,000 times as many buffers as keyset when it walks the same index.
+
+Times vary between runs by up to about 2×, depending on cache state. The ratios do not change.
+
+> **Note: an unfiltered query is not a fair comparison.** Without the route filter, `ORDER BY final_price, itinerary_key LIMIT 20 OFFSET 900000` takes about 1.9 s (Parallel Seq Scan + external merge sort of the whole table, about 129,000 buffers). No index serves that ordering without the equality prefix, so most of the time is the full-table sort, not offset itself. The API never issues this query, because origin, destination and date are required. It is kept in the script output and in `scripts/results/` for scale only.
 
 ## 5. Testing strategy
 

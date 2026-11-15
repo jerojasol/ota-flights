@@ -1,0 +1,83 @@
+classDiagram
+    direction TB
+
+    class Itinerary {
+        <<Aggregate Root>>
+        ItineraryKey key
+        List~Segment~ segments
+        Price basePrice
+        Price finalPrice
+        Provider source
+        Instant ingestedAt
+    }
+
+    class Offer {
+        <<Value Object>>
+        Provider provider
+        List~Segment~ segments
+        Price basePrice
+    }
+
+    class Segment {
+        <<Value Object>>
+        FlightNumber flightNumber
+        Airport departureAirport
+        Instant departureAt
+        Airport arrivalAirport
+        Instant arrivalAt
+    }
+
+    class ItineraryKey {
+        <<Value Object>>
+        String value
+    }
+
+    class FlightNumber {
+        <<Value Object>>
+        Carrier carrier
+        int number
+    }
+
+    class Airport {
+        <<Value Object>>
+        String code
+    }
+
+    class Carrier {
+        <<Value Object>>
+        String code
+    }
+
+    class Price {
+        <<Value Object>>
+        BigDecimal amount
+        Currency currency
+    }
+
+    class PercentageMarkupPolicy {
+        <<Value Object>>
+        BigDecimal percentage
+    }
+
+    class Provider {
+        <<enumeration>>
+        ALPHA
+        BETA
+        GAMMA
+    }
+
+    Itinerary *-- "1" ItineraryKey : key
+    Itinerary *-- "1..4" Segment : segments
+    Itinerary *-- "2" Price : basePrice, finalPrice
+    Itinerary --> Provider : source
+    Itinerary ..> PercentageMarkupPolicy : get finalPrice
+
+    Offer *-- "1..*" Segment : segments
+    Offer *-- "1" Price : basePrice
+    Offer --> Provider : provider
+
+    Segment *-- "1" FlightNumber
+    Segment *-- "2" Airport : departure, arrival
+    FlightNumber *-- "1" Carrier
+
+    ItineraryKey ..> Segment : calculated from

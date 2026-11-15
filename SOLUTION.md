@@ -186,7 +186,16 @@ Each provider package has its own DTOs (raw strings), parser, mapper and client.
 
 ### 3.5 What the human decided
 
-The human decided the module layout and the Spring Initializr skeleton; every MAJOR finding's resolution (§3.3); the port change to `ProviderResponse`; the four failure kinds and which of them the breaker ignores; `PageCursor(Price, ItineraryKey)`; the provider timeout and budget; the fail-closed outage behaviour; the meaning of `providers` after a failed refresh; and what was left as debt (§6, §7).
+The large-scale design was the human's. The AI worked inside it.
+
+- **The domain model:** the aggregate, value objects, invariants, Ubiquitous Language and ports in `domain-model.md` (diagram: [`docs/domain.mmd`](docs/domain.mmd)). Where the AI proposed a change, it went into the document only after the human approved it.
+- **The overall architecture:** hexagonal with a framework-free domain, the read path and write path split (§2.2), Postgres as the store, and Redis used only for freshness and locking.
+- **The tools:** the stack (Java 21, Spring Boot, PostgreSQL, Redis, Resilience4j, React) and the AI tooling (§3.1): which agents, skills and commands to have and where each one lives.
+- **The method:** documents as sources of truth before the code, one prompt per step, the review loop and the running log.
+
+For some of these, the AI drafted the file from the human's instructions, and the log records that as "Generated". This applies to `provider-contracts.md` and the `.opencode/` tooling (ai-log, 2026-11-14). On two choices the AI gave a recommendation and the human chose: Spring Boot 4.1.2 and the single `infrastructure` module (ai-log, 2026-11-13).
+
+The human also decided the module layout and the Spring Initializr skeleton; every MAJOR finding's resolution (§3.3); the port change to `ProviderResponse`; the four failure kinds and which of them the breaker ignores; `PageCursor(Price, ItineraryKey)`; the provider timeout and budget; the fail-closed outage behaviour; the meaning of `providers` after a failed refresh; and what was left as debt (§6, §7).
 
 ### 3.6 Three prompts
 

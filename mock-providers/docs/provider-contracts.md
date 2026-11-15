@@ -152,6 +152,10 @@ Conventions:
 - `Leg/@sequence` is 1-based and legs may arrive **out of order** in the document; always sort by `sequence`.
 - Empty result: `<Itineraries count="0"/>`.
 - Namespace `urn:beta-gds:search:v2` is present on the root element.
+- Daylight saving (how the consumer resolves `LocalDateTime` + `TimeZone`):
+  - A local time inside a spring-forward gap does not exist in that zone. The consumer treats the itinerary as malformed and drops it (counted per provider).
+  - A local time inside the autumn overlap happens twice. The consumer uses the **earlier** offset.
+  - Limitation: a local time without an offset is ambiguous during the overlap. A departure in the repeated hour may be mapped one hour early; it then gets a different departure instant from the same flight sent by Alpha or Gamma (which send UTC), and will not deduplicate against them.
 
 **Response `400`**
 
@@ -198,6 +202,7 @@ ref,price_cents,currency,segments
 GAM-5e1f,51230,EUR,IB;6251;MAD;JFK;202611200735;202611201610
 GAM-8a77,43890,EUR,IB;3166;MAD;LHR;202611200600;202611200825|BA;0117;LHR;JFK;202611201040;202611201855
 GAM-c003,47000,EUR,UX;0091;MAD;JFK;202611201200;202611202045
+#END
 ```
 
 Segment field layout (positional): `carrier;flightNo;from;to;dep;arr`
@@ -208,7 +213,7 @@ Conventions:
 - `flightNo`: zero-padded to 4 digits.
 - No quoting, no embedded commas; fields never contain `,`, `;` or `|`.
 - The response can be **large** (tens of thousands of lines). Consumers must stream it, not buffer it.
-- Empty result: header line only.
+- Empty result: the header line followed by `#END`.
 - A trailing line `#END` marks a complete stream. If the consumer does not see it, the stream was truncated (chaos may cut streams mid-way in a future version; today it does not).
 
 **Response `400`** — `Content-Type: text/plain`
@@ -216,6 +221,8 @@ Conventions:
 ```
 ERR 400 missing parameter: o
 ```
+
+A present but malformed parameter (e.g. `dt=2026-11-20`) uses the same shape: `ERR 400 invalid parameter: dt`.
 
 **Response `500`** — chaos, `Content-Type: text/plain`
 
@@ -262,8 +269,20 @@ Content-Type: application/json
 
 Returns the effective configuration. Intended for live demos ("watch the aggregator survive Beta dying").
 
+Any subset of the four fields may be sent; omitted fields keep their current value. Durations accept the simple form (`2000ms`, `2s`) or ISO-8601 (`PT2S`). The response always uses milliseconds:
+
+```json
+{ "enabled": true, "latencyMin": "100ms", "latencyMax": "2000ms", "errorRate": 0.5 }
+```
+
+An invalid result (`errorRate` outside `[0, 1]`, negative latency, `latencyMin > latencyMax`, `latencyMax > 30s`, unparseable duration) is rejected with `400` and the configuration is left unchanged:
+
+```json
+{ "error": "BAD_REQUEST", "message": "errorRate must be in [0, 1]" }
+```
+
 ```
 GET /admin/chaos
 ```
 
-Returns the current configuration.
+Returns the current configuration, same shape as above.

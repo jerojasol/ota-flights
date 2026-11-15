@@ -17,7 +17,7 @@ Target scale: 100,000 – 1,000,000 itineraries per day.
 - HTTP client for provider adapters: `RestClient`. Not `RestTemplate` (maintenance mode), not `WebClient` (this service is not reactive).
 - Virtual threads enabled (`spring.threads.virtual.enabled=true`) for provider fan-out.
 - PostgreSQL 16 with Flyway migrations
-- Redis for freshness markers, aggregation locks and hot-page caching
+- Redis for freshness markers and aggregation locks. It holds no itineraries and no cached result pages (see `../SOLUTION.md` §2.2)
 - Resilience4j (circuit breaker, time limiter, retry)
 - JUnit 5, AssertJ, ArchUnit, WireMock, Testcontainers 2.x (artifacts are `testcontainers-postgresql`, `testcontainers-junit-jupiter`, `com.redis:testcontainers-redis`; the 1.x names `postgresql`/`junit-jupiter` do not resolve)
 - Do not upgrade to Spring Boot 4.2.x for this delivery even if released; stay on 4.1.x patch releases.
@@ -28,6 +28,7 @@ Target scale: 100,000 – 1,000,000 itineraries per day.
 flight-aggregator/
 ├── pom.xml            Parent POM (inherits spring-boot-starter-parent for version/plugin management only; declares NO dependencies)
 ├── domain/            flight-aggregator-domain. Pure Java. NO framework dependencies. Only JUnit/AssertJ in test scope.
+│                      Packages: model, service, search, aggregation, exception, port.in, port.out (see docs/domain-model.md §7 "Package layout").
 ├── application/       flight-aggregator-application. Use case orchestration. Depends on domain only.
 ├── infrastructure/    flight-aggregator-infrastructure. Spring Boot app. Web, persistence, provider clients, cache, config. Only module with spring-boot-maven-plugin.
 └── docs/              domain-model.md
@@ -84,7 +85,7 @@ Do **not** use: `Flight` (ambiguous — say Segment or Itinerary), `Trip`, `Jour
 - Package root: `io.github.jerojasol.flights`. Module packages: `io.github.jerojasol.flights.domain`, `io.github.jerojasol.flights.application`, `io.github.jerojasol.flights.infrastructure`.
 - Prefer `record` for immutable data. Prefer `sealed` interfaces for closed hierarchies (e.g. validation results).
 - No Lombok. Java 21 makes it unnecessary.
-- No `Optional` as field or parameter type; return type only.
+- No `Optional` as field or parameter type; return type only. Agreed exception: the port parameters and query/result records listed in `docs/domain-model.md` §8 ("Optional convention").
 - No `null` across module boundaries. Use `Optional` or empty collections.
 - Constructor injection only. No field injection.
 - Exceptions: domain exceptions extend `DomainException` (unchecked). Infrastructure maps them to RFC 7807 Problem Details.
@@ -109,9 +110,10 @@ Do **not** use: `Flight` (ambiguous — say Segment or Itinerary), `Trip`, `Jour
 ## 8. Commands
 
 ```bash
-./mvnw clean verify                              # build and test everything
+./mvnw verify                                    # unit + integration (needs Docker)
+./mvnw verify -DskipITs                          # unit only
+./mvnw verify -Pperf                             # perf-tagged ITs only
 ./mvnw -pl domain test                           # domain tests only (fast)
-./mvnw -pl infrastructure verify -Pintegration   # integration tests (needs Docker)
 ./mvnw -pl infrastructure spring-boot:run        # run locally (expects Postgres/Redis/providers reachable)
 ```
 

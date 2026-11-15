@@ -1,0 +1,11 @@
+target/
+.idea/
+*.iml
+prompts/
+docs/
+scripts/
+.opencode/
+AGENTS.md
+README.md
+HELP.md
+.git

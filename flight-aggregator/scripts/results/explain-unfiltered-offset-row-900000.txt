@@ -1,0 +1,25 @@
+-- Unfiltered, offset, row 900000
+SELECT * FROM itineraries ORDER BY final_price, itinerary_key LIMIT 20 OFFSET 900000;
+
+Limit  (cost=387400.59..387400.71 rows=1 width=474) (actual time=1455.104..1511.575 rows=20 loops=1)
+  Buffers: shared hit=13804 read=52949, temp read=115325 written=120715
+  ->  Gather Merge  (cost=290171.50..387400.59 rows=833334 width=474) (actual time=853.517..1479.773 rows=900020 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=13804 read=52949, temp read=115325 written=120715
+        ->  Sort  (cost=289171.48..290213.15 rows=416667 width=474) (actual time=826.924..959.448 rows=300081 loops=3)
+              Sort Key: final_price, itinerary_key
+              Sort Method: external merge  Disk: 170232kB
+              Buffers: shared hit=13804 read=52949, temp read=115325 written=120715
+              Worker 0:  Sort Method: external merge  Disk: 156544kB
+              Worker 1:  Sort Method: external merge  Disk: 155432kB
+              ->  Parallel Seq Scan on itineraries  (cost=0.00..70833.67 rows=416667 width=474) (actual time=0.063..102.148 rows=333333 loops=3)
+                    Buffers: shared hit=13718 read=52949
+Planning:
+  Buffers: shared hit=218
+Planning Time: 1.822 ms
+JIT:
+  Functions: 2
+  Options: Inlining false, Optimization false, Expressions true, Deforming true
+  Timing: Generation 0.099 ms, Inlining 0.000 ms, Optimization 0.779 ms, Emission 5.291 ms, Total 6.168 ms
+Execution Time: 1588.288 ms

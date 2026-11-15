@@ -1,0 +1,12 @@
+-- Real route, offset, row 513
+SELECT * FROM itineraries WHERE origin = 'MAD' AND destination = 'BCN' AND departure_date = DATE '2026-12-01' ORDER BY final_price, itinerary_key LIMIT 20 OFFSET 513;
+
+Limit  (cost=1869.94..1942.82 rows=20 width=474) (actual time=2.522..2.593 rows=20 loops=1)
+  Buffers: shared hit=546
+  ->  Index Scan using ix_itineraries_search on itineraries  (cost=0.42..2551.42 rows=700 width=474) (actual time=0.048..2.577 rows=533 loops=1)
+        Index Cond: ((origin = 'MAD'::bpchar) AND (destination = 'BCN'::bpchar) AND (departure_date = '2026-12-01'::date))
+        Buffers: shared hit=546
+Planning:
+  Buffers: shared hit=227
+Planning Time: 1.326 ms
+Execution Time: 2.702 ms

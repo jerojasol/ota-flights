@@ -1,0 +1,13 @@
+-- Deep route, offset, row 190000, ordered index scan forced
+SET enable_bitmapscan = off; SET enable_seqscan = off; SET enable_sort = off;
+SELECT * FROM itineraries WHERE origin = 'ZZA' AND destination = 'ZZB' AND departure_date = DATE '2026-12-01' ORDER BY final_price, itinerary_key LIMIT 20 OFFSET 190000;
+
+Limit  (cost=32359.99..32363.41 rows=1 width=474) (actual time=172.612..172.648 rows=20 loops=1)
+  Buffers: shared hit=191283 read=2087
+  ->  Index Scan using ix_itineraries_search on itineraries  (cost=0.42..32359.99 rows=9457 width=474) (actual time=0.124..167.546 rows=190020 loops=1)
+        Index Cond: ((origin = 'ZZA'::bpchar) AND (destination = 'ZZB'::bpchar) AND (departure_date = '2026-12-01'::date))
+        Buffers: shared hit=191283 read=2087
+Planning:
+  Buffers: shared hit=208 read=19
+Planning Time: 1.669 ms
+Execution Time: 172.803 ms

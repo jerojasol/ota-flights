@@ -1,0 +1,4 @@
+# Test profile: no scheduled ingestion, so no integration test ever calls providers on a timer.
+# Provider URLs, Postgres and Redis are set by each test (WireMock, Testcontainers).
+aggregation:
+  warm-routes: ""

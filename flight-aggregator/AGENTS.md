@@ -28,6 +28,7 @@ Target scale: 100,000 – 1,000,000 itineraries per day.
 flight-aggregator/
 ├── pom.xml            Parent POM (inherits spring-boot-starter-parent for version/plugin management only; declares NO dependencies)
 ├── domain/            flight-aggregator-domain. Pure Java. NO framework dependencies. Only JUnit/AssertJ in test scope.
+│                      Packages: model, service, search, aggregation, exception, port.in, port.out (see docs/domain-model.md §7 "Package layout").
 ├── application/       flight-aggregator-application. Use case orchestration. Depends on domain only.
 ├── infrastructure/    flight-aggregator-infrastructure. Spring Boot app. Web, persistence, provider clients, cache, config. Only module with spring-boot-maven-plugin.
 └── docs/              domain-model.md

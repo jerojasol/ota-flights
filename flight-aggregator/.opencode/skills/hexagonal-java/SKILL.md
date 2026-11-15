@@ -20,6 +20,8 @@ The domain defines the interfaces (ports). Infrastructure implements them. Appli
 ```java
 package io.github.jerojasol.flights.domain.model;
 
+import io.github.jerojasol.flights.domain.exception.InvalidAirportException;
+
 public record Airport(String code) {
 
     private static final java.util.regex.Pattern IATA = java.util.regex.Pattern.compile("[A-Z]{3}");
@@ -37,7 +39,7 @@ public record Airport(String code) {
 ```
 
 - Validation in the compact constructor. Normalisation (trim/uppercase) in a static factory, so the constructor stays strict.
-- Domain exceptions extend `DomainException` (unchecked), live in `domain.model` or `domain.exception`.
+- Domain exceptions extend `DomainException` (unchecked), live in `domain.exception`. Other domain types go in `domain.model`, `domain.service`, `domain.search` or `domain.aggregation` (see `docs/domain-model.md` §7 "Package layout").
 - No Jackson, no JPA, no Bean Validation annotations.
 
 ## 2. Aggregate root with derived state
@@ -184,7 +186,7 @@ Keep `ArchitectureTest` in `infrastructure/src/test` with at least:
 - `domain..` depends only on `java..` and `domain..`
 - `application..` depends only on `java..`, `domain..`, `application..`
 - `..infrastructure.web..` does not depend on `..persistence..`, `..provider..`, `..cache..`
-- Classes named `*Controller` depend only on `..domain.port.in..`, `..domain.model..`, `..infrastructure.web..`, Spring, `java..`, `jakarta.validation..`
+- Classes named `*Controller` depend only on `..domain.port.in..`, `..domain.model..`, `..domain.search..`, `..domain.aggregation..`, `..infrastructure.web..`, Spring, `java..`, `jakarta.validation..`
 - `..persistence..` entities (`@Entity`) are not accessed from outside `..persistence..`
 - Provider DTO packages are not accessed from outside their own adapter package
 

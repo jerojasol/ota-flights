@@ -46,7 +46,7 @@ If code and documents disagree, the documents win unless the human explicitly ch
 - `ItineraryKey` is never accepted from outside — only derived from segments (I12).
 - Money is `BigDecimal` with explicit scale and `RoundingMode.HALF_EVEN`. Flag any `double`/`float` for money or time arithmetic.
 - Time inside the domain is `Instant`. Flag `LocalDateTime`, `ZonedDateTime`, `Date` in domain types.
-- Anemia: if a class in `domain/model` has only accessors and all logic about it lives in a service, flag it with a suggestion of which behaviour should move.
+- Anemia: if a class in `domain/model`, `domain/search` or `domain/aggregation` has only accessors and all logic about it lives in a service, flag it with a suggestion of which behaviour should move.
 - Logic leakage: business rules (validation, pricing, dedup, connection rules) found in `application` or `infrastructure` instead of `domain`.
 - `Optional` as a field or parameter type; `null` returned across module boundaries.
 

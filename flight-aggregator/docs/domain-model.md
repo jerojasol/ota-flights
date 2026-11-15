@@ -188,9 +188,34 @@ Which component raises which reason:
 
 All three hold no mutable state, are framework-free, and composed by the application-layer `AggregateFlightsService`.
 
+### Package layout
+
+Under `io.github.jerojasol.flights.domain`:
+
+| Package | Purpose | Types |
+|---|---|---|
+| `model` | What is sold, and the rules it carries | `Itinerary`, `Segment`, `Offer`, `ItineraryKey`, `Airport`, `Carrier`, `FlightNumber`, `Price`, `Provider`, `RejectionReason`, `MarkupPolicy`, `PercentageMarkupPolicy` |
+| `service` | The three steps of the pipeline and their results | `OfferValidator`, `OfferValidation`, `ValidationSummary`, `ItineraryDeduplicator`, `ItineraryFactory` |
+| `search` | What goes into and comes out of a search | `SearchCriteria`, `ItineraryFilter`, `PageCursor`, `ItineraryPage`, `SearchResult`, `Freshness`, `LockToken` |
+| `aggregation` | The outcome of calling the providers | `AggregationResult`, `ProviderOutcome`, `ProviderResponse`, `ProviderStatus` |
+| `exception` | `DomainException` and every subclass | `DomainException`, `InvalidAggregationException`, `InvalidAirportException`, `InvalidCarrierException`, `InvalidFlightNumberException`, `InvalidItineraryException`, `InvalidItineraryKeyException`, `InvalidOfferException`, `InvalidPriceException`, `InvalidSearchException`, `InvalidSegmentException`, `ProviderUnavailableException` |
+| `port.in`, `port.out` | Ports (§8) | Use cases, repositories, providers |
+
+Dependency direction (enforced by `ArchitectureTest`):
+
+```
+service      ──> model
+search       ──> model, aggregation
+aggregation  ──> model
+model        ──> (none of the three above)
+exception    <─> model, aggregation     (accepted: exceptions carry the types they report)
+```
+
+`MarkupPolicy`/`PercentageMarkupPolicy` and `RejectionReason` stay in `model` because `Itinerary` uses them directly. `Itinerary.findViolation` and `Itinerary.Violation` are `public`: `findViolation` is the single implementation of I1–I9, used by `Itinerary`'s own factories and by `service.OfferValidator`, which needs a result instead of an exception and now lives in another package.
+
 ## 8. Ports
 
-All types below live in `domain.model` except the ports (`domain.port.in`, `domain.port.out`). Ports are plain interfaces over domain types.
+Types below live in the packages listed in §7 "Package layout"; the ports live in `domain.port.in` and `domain.port.out`. Ports are plain interfaces over domain types.
 
 ### Inbound (use cases, `domain/port/in`)
 ```

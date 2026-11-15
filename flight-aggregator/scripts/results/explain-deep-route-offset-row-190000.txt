@@ -1,0 +1,26 @@
+-- Deep route, offset, row 190000
+SELECT * FROM itineraries WHERE origin = 'ZZA' AND destination = 'ZZB' AND departure_date = DATE '2026-12-01' ORDER BY final_price, itinerary_key LIMIT 20 OFFSET 190000;
+
+Limit  (cost=28710.38..28710.49 rows=1 width=474) (actual time=367.897..385.991 rows=20 loops=1)
+  Buffers: shared hit=4868 read=12025, temp read=11621 written=12097
+  ->  Gather Merge  (cost=27790.98..28710.38 rows=7880 width=474) (actual time=267.522..380.865 rows=190020 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=4868 read=12025, temp read=11621 written=12097
+        ->  Sort  (cost=26790.96..26800.81 rows=3940 width=474) (actual time=258.089..287.177 rows=63395 loops=3)
+              Sort Key: final_price, itinerary_key
+              Sort Method: external merge  Disk: 32232kB
+              Buffers: shared hit=4868 read=12025, temp read=11621 written=12097
+              Worker 0:  Sort Method: external merge  Disk: 32160kB
+              Worker 1:  Sort Method: external merge  Disk: 32120kB
+              ->  Parallel Bitmap Heap Scan on itineraries  (cost=805.00..26555.66 rows=3940 width=474) (actual time=55.698..118.525 rows=66667 loops=3)
+                    Recheck Cond: ((origin = 'ZZA'::bpchar) AND (destination = 'ZZB'::bpchar) AND (departure_date = '2026-12-01'::date))
+                    Heap Blocks: exact=4456
+                    Buffers: shared hit=4840 read=12025
+                    ->  Bitmap Index Scan on ix_itineraries_search  (cost=0.00..802.64 rows=9457 width=0) (actual time=61.932..61.933 rows=200000 loops=1)
+                          Index Cond: ((origin = 'ZZA'::bpchar) AND (destination = 'ZZB'::bpchar) AND (departure_date = '2026-12-01'::date))
+                          Buffers: shared hit=1017 read=2514
+Planning:
+  Buffers: shared hit=227
+Planning Time: 1.788 ms
+Execution Time: 398.813 ms

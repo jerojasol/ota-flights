@@ -1,0 +1,12 @@
+-- Deep route, keyset, row 190000
+SELECT * FROM itineraries WHERE origin = 'ZZA' AND destination = 'ZZB' AND departure_date = DATE '2026-12-01' AND (final_price, itinerary_key) > (999.61, '624bd3fba5475b66303d9037d585f4ecd180936dce15c6d1d0d95a501ccac236') ORDER BY final_price, itinerary_key LIMIT 20;
+
+Limit  (cost=0.42..73.62 rows=20 width=474) (actual time=0.082..0.433 rows=20 loops=1)
+  Buffers: shared hit=24
+  ->  Index Scan using ix_itineraries_search on itineraries  (cost=0.42..1654.71 rows=452 width=474) (actual time=0.082..0.431 rows=20 loops=1)
+        Index Cond: ((origin = 'ZZA'::bpchar) AND (destination = 'ZZB'::bpchar) AND (departure_date = '2026-12-01'::date) AND (ROW(final_price, itinerary_key) > ROW(999.61, '624bd3fba5475b66303d9037d585f4ecd180936dce15c6d1d0d95a501ccac236'::bpchar)))
+        Buffers: shared hit=24
+Planning:
+  Buffers: shared hit=226
+Planning Time: 1.143 ms
+Execution Time: 0.548 ms

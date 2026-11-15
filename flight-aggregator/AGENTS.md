@@ -17,7 +17,7 @@ Target scale: 100,000 – 1,000,000 itineraries per day.
 - HTTP client for provider adapters: `RestClient`. Not `RestTemplate` (maintenance mode), not `WebClient` (this service is not reactive).
 - Virtual threads enabled (`spring.threads.virtual.enabled=true`) for provider fan-out.
 - PostgreSQL 16 with Flyway migrations
-- Redis for freshness markers, aggregation locks and hot-page caching
+- Redis for freshness markers and aggregation locks. It holds no itineraries and no cached result pages (see `../SOLUTION.md` §2.2)
 - Resilience4j (circuit breaker, time limiter, retry)
 - JUnit 5, AssertJ, ArchUnit, WireMock, Testcontainers 2.x (artifacts are `testcontainers-postgresql`, `testcontainers-junit-jupiter`, `com.redis:testcontainers-redis`; the 1.x names `postgresql`/`junit-jupiter` do not resolve)
 - Do not upgrade to Spring Boot 4.2.x for this delivery even if released; stay on 4.1.x patch releases.

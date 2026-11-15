@@ -1,4 +1,4 @@
--- 1,000,000-row seed for the keyset vs. offset measurement (docs/SOLUTION.md §4.3).
+-- 1,000,000-row seed for the keyset vs. offset measurement (SOLUTION.md §4.3, repository root).
 --
 -- WARNING: this TRUNCATEs the itineraries table. Run it only against a disposable database
 -- (e.g. the compose Postgres), never against data you want to keep.

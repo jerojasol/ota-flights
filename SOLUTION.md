@@ -212,7 +212,7 @@ The human also decided the module layout and the Spring Initializr skeleton; eve
 
 ### 4.1 Schema
 
-There is one table, `itineraries` (`V1__create_itineraries.sql`), with one row per Itinerary Key: "the cheapest offer seen for that product, with markup already applied". The search columns (`origin`, `destination`, `departure_date`, `carriers`, `final_price`, `currency`) are denormalised next to `segments JSONB`, so a search reads one row per result with no join.
+There is one table, `itineraries` (`V1__create_itineraries.sql`), with one row per Itinerary Key: the cheapest offer the providers are quoting **now** for that product, with markup already applied. The search columns (`origin`, `destination`, `departure_date`, `carriers`, `final_price`, `currency`) are denormalised next to `segments JSONB`, so a search reads one row per result with no join.
 
 | Object | Columns | Reason (from the migration) |
 |---|---|---|
@@ -220,11 +220,17 @@ There is one table, `itineraries` (`V1__create_itineraries.sql`), with one row p
 | `ix_itineraries_search` | `(origin, destination, departure_date, final_price, itinerary_key)` | "Postgres seeks straight to the cursor position and reads `limit + 1` entries in index order: the cost of a page does not grow with its depth, and no sort step is needed." |
 | `ix_itineraries_carriers` | GIN `(carriers)` | "`carrier = ANY(carriers)` […] a B-tree cannot index. A GIN index on the array answers containment (`carriers @> ARRAY[...]`)." |
 
-**Upsert** (`ItineraryJdbcUpserter`): `ON CONFLICT (itinerary_key) DO UPDATE … WHERE EXCLUDED.final_price < itineraries.final_price AND EXCLUDED.currency = itineraries.currency`. The cheaper offer wins, prices are compared only within one currency, and nothing is ever deleted. *Cost:* the table only grows (§6).
+**Upsert** (`ItineraryJdbcUpserter`): `ON CONFLICT (itinerary_key) DO UPDATE` with **no `WHERE`** — the incoming itinerary always replaces the stored one, and nothing is ever deleted. *Cost:* the table only grows (§6).
+
+The `DO UPDATE` carried a `WHERE EXCLUDED.final_price < itineraries.final_price AND EXCLUDED.currency = itineraries.currency` guard until the price-increase fix. It was wrong: choosing the cheapest offer *across providers* is `ItineraryDeduplicator`'s job and has already happened before the repository is called, so the only thing the guard compared against was an **earlier aggregation**. The table therefore held the lowest price ever seen rather than the price on sale, and a provider that raised its price could never correct the row — searches served a price nobody would honour, and `persisted` reported 0 as if nothing had changed. The currency half of the guard was redundant for the same reason (`OfferValidator` rejects anything outside `REFERENCE_CURRENCY`, so a batch is single-currency) and would have stranded existing rows in the old currency for good after a currency change. `currency` is now in the `SET` list, so the amount and its unit always move together.
+
+Two consequences, both accepted:
+- **A provider outage can raise a stored price.** Every aggregation calls all three providers, but if the provider that won a key last time is unavailable this time, the key is rewritten with the cheapest price among those that answered, which may be higher than what the absent provider still sells. The next aggregation in which it answers corrects the row. The alternative considered — skip the update unless the row's `source` answered OK — keeps the lower price but needs the set of OK providers pushed down into the repository port, and it holds a price that may itself be stale. Latest-wins was chosen as the simpler rule that always converges.
+- **`persisted` now counts itineraries upserted**, not itineraries whose price improved. A repeated aggregation with unchanged prices reports the full count rather than 0.
 
 **Write volume.** The brief's 100,000 to 1,000,000 itineraries a day is about 1 to 12 stored rows per second on average. The write path is sized for that with room to spare:
 - `ItineraryDeduplicator` groups offers by key in one pass over a hash map, so deduplication is linear in the number of offers.
-- `ItineraryJdbcUpserter` writes in JDBC batches of 1,000 rows (`CHUNK_SIZE`) with a single `INSERT … ON CONFLICT` statement. The database decides which price wins, atomically, so no row is read before it is written.
+- `ItineraryJdbcUpserter` writes in JDBC batches of 1,000 rows (`CHUNK_SIZE`) with a single `INSERT … ON CONFLICT` statement. Insert and conflict resolution are one atomic operation, so no row is read before it is written.
 - Gamma's export is read line by line from the response stream (`GammaStreamReader`) and never held in memory as one body.
 - One route and date is about 700 offers across the three providers on the default mock and a few hundred stored rows, so a million rows a day is in the order of a few thousand route-and-date aggregations.
 
@@ -247,6 +253,7 @@ Pages are ordered by `(final_price, itinerary_key)`, which is the suffix of `ix_
 **Why keyset anyway.** Keyset was chosen for three reasons:
 - Its cost does not grow with page depth.
 - Pages stay stable while background refreshes upsert rows. With offset, a cheaper itinerary arriving ahead of the reader pushes every later row back one place, so the next page repeats one already shown. A keyset cursor resumes after the last `(final_price, itinerary_key)` the client saw, so it does not repeat. Offset would also skip a row if one disappeared, but the upsert never deletes. Neither technique shows a row that moves into a page already read.
+  - Neither technique isolates a reader from a row whose sort key *changes* mid-walk, and since the price-increase fix a `final_price` can move in both directions. A row already shown whose price rises moves after the cursor and can appear on a later page; a row not yet shown whose price falls moves before the cursor and is missed. Both windows are one refresh wide and close on the next full walk. A snapshot would need a repeatable-read transaction held across requests, or an aggregation id in the cursor; neither is worth it for a "Load more" list.
 - It needs no `COUNT(*)`.
 
 **What keyset gives up:** the client cannot jump to an arbitrary page, and there is no total count. A flight search UI needs neither: the dashboard only offers "Load more".
@@ -308,13 +315,14 @@ Counts from runs on 2026-11-15, all green:
 - **`ArchitectureTest`:** the structure (§2.1).
 - **`FlightAggregatorApplicationIT`:** boots the service; with Redis stopped, liveness is UP, search returns 200 STALE, and the admin refresh returns 409.
 
-**`EndToEndIT`** tells one story in six steps:
+**`EndToEndIT`** tells one story in seven steps:
 1. A cold search aggregates the three providers (7 offers → 3 itineraries).
 2. Keyset paging visits each itinerary once with no provider call.
 3. A max-price filter returns an empty page.
 4. Beta fails during a background refresh; its stored itineraries stay.
 5. A cheaper Alpha offer replaces Gamma's on the next refresh.
-6. A manual refresh reports each provider and persists nothing, because nothing was cheaper.
+6. A manual refresh reports each provider and rewrites every itinerary still on offer.
+7. Alpha puts that price back up, and the stored row follows the increase instead of keeping a price nobody sells.
 
 **`scripts/smoke.sh`** runs against the live stack. It checks liveness, a first page, a cursor page with no repeats, the markup, a 400 Problem Details response, and the frontend's `/healthz`, shell and `/api` proxy. It passed on a clean clone of the branch (`up --wait` 33 s after a 120 s build).
 
@@ -333,8 +341,8 @@ Counts from runs on 2026-11-15, all green:
 ## 6. Limitations and trade-offs
 
 - **Single currency; no FX.**
-  - Offers outside `REFERENCE_CURRENCY` are rejected (O1), and prices are never compared across currencies: a max-price filter or a cursor only matches rows in its own currency, and an upsert conflict in another currency writes nothing.
-  - If the reference currency changed, a route could hold rows in two currencies, and an unfiltered first page would interleave them by raw amount.
+  - Offers outside `REFERENCE_CURRENCY` are rejected (O1), and prices are never compared across currencies: a max-price filter or a cursor only matches rows in its own currency.
+  - If the reference currency changed, a route could hold rows in two currencies until every one of its keys has been re-aggregated, and an unfiltered first page would interleave them by raw amount. The upsert deliberately does not guard against this: refusing the write would make the mixture permanent rather than transient (§4.1).
   - Amounts always have scale 2 (P2). EUR and JPY are exact; a 3-decimal currency such as KWD is rounded HALF_EVEN to 2 decimals. Pseudo-currencies without minor units (XXX, XAU) are dropped as unmappable.
 - **Exact-key deduplication only; no fuzzy matching.**
   - Beta sends local time plus an IANA zone, without an offset. In the autumn daylight-saving overlap a local time happens twice and the adapter uses the earlier offset, so a departure in the repeated hour may be mapped one hour early and not deduplicate against Alpha and Gamma. A time inside the spring gap is dropped as unmappable. Fixing it would need Beta to send an offset.
@@ -347,7 +355,8 @@ Counts from runs on 2026-11-15, all green:
 - **Chaos in the mock is global.** One `errorRate` and one latency range apply to all three providers, so a demo cannot fail one provider while the others stay healthy.
 - **Fixtures are partly maintained by hand.** `dead-legs.*`, `malformed-*`, `contract-example.*` and `overlap-plus-beta-only.xml` are written against `provider-contracts.md`, not exported, so they drift if the contract changes.
 - **Times are shown in UTC.** The API returns instants and the dashboard has no airport time-zone data, so it cannot show local departure and arrival times.
-- **`ingested_at` is not "last seen".** It records when the current winning price was written and changes only when a cheaper price arrives. It cannot tell an itinerary still on offer from one no provider sells any more, so it is not enough to expire old rows (§7).
+- **Itineraries no provider sells any more keep their last price.** The upsert never deletes, so a key that stops being offered — sold out, schedule pulled — stays in the table at the price of the last aggregation that saw it, and a search still returns it. Expiring vanished itineraries was left out of the price-increase fix as a separate concern (§7).
+  - Since that fix, `ingested_at` is a usable staleness signal: every aggregation rewrites the row of every itinerary still on offer, so the column now means "last seen by an aggregation at this price" rather than "when the current winning price was written". It is still only meaningful for routes something actually aggregates, so expiry needs the warm-routes list or a per-route sweep, not a global `ingested_at` threshold.
 - **No authentication.** This includes `POST /api/admin/aggregations` and the actuator endpoints; `/actuator/health` shows details (provider circuit breakers) to anyone.
 - **Itineraries are never deleted or expired.** Past departure dates stay in `itineraries` forever. The table grows by the daily volume.
 - **The lock → aggregate → mark → release sequence exists in three places:** `SearchItinerariesService` (cold miss and background refresh) and `RefreshItinerariesService`. They differ in how they treat a failure. Tests pin each path, but a rule change needs three edits.
@@ -364,5 +373,6 @@ In order of value:
 5. **Circuit-recovery test:** open the breaker, wait out the open state, and assert half-open and then closed.
 6. **Unify the lock sequence** into one helper that keeps the three failure treatments explicit.
 7. **Expiry of old itineraries:** a scheduled delete of past departure dates, or monthly partitions dropped as a whole.
-8. **Authentication on the admin endpoint** and on non-health actuator endpoints.
-9. **Per-provider chaos in the mock**, so a demo can fail Beta alone.
+8. **Retire itineraries no provider offers any more:** after an aggregation in which every provider answered OK, mark or delete the route's keys that were not returned. `ingested_at` is now rewritten on every sighting (§6), so the sweep can key off it, but it needs the all-OK condition to avoid retiring a row just because one provider was down.
+9. **Authentication on the admin endpoint** and on non-health actuator endpoints.
+10. **Per-provider chaos in the mock**, so a demo can fail Beta alone.

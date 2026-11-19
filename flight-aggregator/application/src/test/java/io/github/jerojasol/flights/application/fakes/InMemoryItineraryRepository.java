@@ -28,17 +28,13 @@ public final class InMemoryItineraryRepository implements ItineraryRepositoryPor
     private volatile int lastLimit;
     private volatile Runnable onFindBy = () -> { };
 
+    /** Mirrors the port contract: on a key conflict the incoming Itinerary wins, whatever its Final Price. */
     @Override
     public synchronized int upsertAll(Collection<Itinerary> itineraries) {
-        int written = 0;
         for (Itinerary itinerary : itineraries) {
-            Itinerary stored = rows.get(itinerary.key());
-            if (stored == null || itinerary.finalPrice().isLowerThan(stored.finalPrice())) {
-                rows.put(itinerary.key(), itinerary);
-                written++;
-            }
+            rows.put(itinerary.key(), itinerary);
         }
-        return written;
+        return itineraries.size();
     }
 
     @Override

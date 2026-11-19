@@ -11,9 +11,15 @@ import java.sql.Types;
 import java.util.List;
 
 /**
- * Batched upsert. On a key conflict the row is only rewritten when the incoming Final Price is strictly lower and in
- * the same currency, so the table always holds the cheapest offer seen per Itinerary Key, whatever order aggregations
- * arrive in. Prices in different currencies are not comparable (P4): such a conflict writes nothing and counts 0.
+ * Batched upsert. On a key conflict the row is rewritten unconditionally, so the table holds the price the providers
+ * are quoting now rather than the lowest price ever seen: a provider that raises its price corrects the stored row.
+ * <p>
+ * There is deliberately no {@code WHERE} on the {@code DO UPDATE}. Keeping the cheapest offer across providers is
+ * {@code ItineraryDeduplicator}'s job and has already run, so a condition here could only compare the incoming price
+ * against an earlier aggregation's; a guard such as {@code EXCLUDED.final_price < itineraries.final_price} would
+ * freeze the row at a stale, lower price for good. A currency guard is not needed either: {@code OfferValidator}
+ * rejects every offer not quoted in the reference currency (O1, §10), so each batch is single-currency, and a guard
+ * would strand existing rows in the old currency permanently after a {@code REFERENCE_CURRENCY} change.
  */
 final class ItineraryJdbcUpserter {
 
@@ -25,9 +31,8 @@ final class ItineraryJdbcUpserter {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?)
             ON CONFLICT (itinerary_key) DO UPDATE
             SET base_price = EXCLUDED.base_price, final_price = EXCLUDED.final_price,
-                source = EXCLUDED.source, segments = EXCLUDED.segments, ingested_at = EXCLUDED.ingested_at
-            WHERE EXCLUDED.final_price < itineraries.final_price
-              AND EXCLUDED.currency = itineraries.currency
+                currency = EXCLUDED.currency, source = EXCLUDED.source,
+                segments = EXCLUDED.segments, ingested_at = EXCLUDED.ingested_at
             """;
 
     private final JdbcTemplate jdbc;

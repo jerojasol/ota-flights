@@ -146,14 +146,28 @@ class EndToEndIT {
         assertThat(amount(cheapest, "finalPrice")).isEqualByComparingTo("315.00");
         assertThat(text(cheapest, "source")).isEqualTo("ALPHA");
 
-        // 6. Manual aggregation: an operator refresh runs at once and reports each provider. Nothing is cheaper than
-        //    what is stored, so nothing is rewritten.
+        // 6. Manual aggregation: an operator refresh runs at once and reports each provider. Every itinerary the
+        //    providers still offer is rewritten with the price they quote now, cheaper or not, so `persisted` counts
+        //    the itineraries upserted. Beta is still failing, so that is every distinct itinerary except the one only
+        //    Beta sells; its row survives untouched because an upsert never deletes.
         JsonNode manual = post("/api/admin/aggregations",
                 "{\"origin\":\"MAD\",\"destination\":\"JFK\",\"date\":\"2026-11-20\"}");
-        assertThat(manual.get("persisted").asInt()).isZero();
+        assertThat(manual.get("persisted").asInt()).isEqualTo(DISTINCT_ITINERARIES - 1);
         assertThat(text(manual.get("providers").get("ALPHA"), "status")).isEqualTo("OK");
         assertThat(text(manual.get("providers").get("BETA"), "status")).isEqualTo("ERROR");
         assertThat(text(manual.get("providers").get("GAMMA"), "status")).isEqualTo("OK");
+
+        // 7. A price increase is followed, not ignored. Alpha puts KL1898 back up to its original price, so the
+        //    cheapest offer for that key is Gamma's again and the stored row must rise from 315.00 to 377.09.
+        //    Under a "cheapest ever seen" upsert the row would have kept 315.00 for good: a price no provider sells.
+        stubAlpha(fixture("alpha/two-itineraries.json"));
+        expireFreshness();
+        search(ROUTE);
+        awaitFresh();
+        JsonNode increased = allPages(20).getFirst();
+        assertThat(flightNumbers(increased)).containsExactly("KL1898");
+        assertThat(amount(increased, "finalPrice")).isEqualByComparingTo("377.09");
+        assertThat(text(increased, "source")).isEqualTo("GAMMA");
     }
 
     // --- Steps -------------------------------------------------------------------------------------------------

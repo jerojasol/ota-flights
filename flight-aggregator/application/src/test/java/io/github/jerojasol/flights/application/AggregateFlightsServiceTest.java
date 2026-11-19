@@ -89,6 +89,26 @@ class AggregateFlightsServiceTest {
         });
     }
 
+    // The repository stores what the providers quote now, not the lowest price ever seen (domain-model.md §8), so a
+    // second aggregation of the same key overwrites the first even when the price went up. Pins the contract above
+    // infrastructure: a price guard reintroduced in InMemoryItineraryRepository would fail here.
+    @Test
+    void should_overwrite_stored_itinerary_when_the_same_key_comes_back_dearer() {
+        AggregateFlightsService cheap = service(DIRECT, BUDGET,
+                StubProvider.returning(ALPHA, direct(ALPHA, "IB6251", "500.00")));
+        cheap.aggregate(MAD_JFK);
+
+        AggregateFlightsService dearer = service(DIRECT, BUDGET,
+                StubProvider.returning(ALPHA, direct(ALPHA, "IB6251", "560.00")));
+        AggregationResult result = dearer.aggregate(MAD_JFK);
+
+        assertThat(result.persisted()).isEqualTo(1);
+        assertThat(repository.all()).singleElement().satisfies(itinerary -> {
+            assertThat(itinerary.basePrice()).isEqualTo(Price.of("560.00", "EUR"));
+            assertThat(itinerary.finalPrice()).isEqualTo(Price.of("588.00", "EUR"));
+        });
+    }
+
     @Test
     void should_persist_other_providers_and_report_error_when_one_provider_is_unavailable() {
         AggregateFlightsService service = service(DIRECT, BUDGET,

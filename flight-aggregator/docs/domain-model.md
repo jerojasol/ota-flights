@@ -239,7 +239,7 @@ FlightProviderPort
   ProviderResponse fetch(SearchCriteria criteria)   // throws ProviderUnavailableException
 
 ItineraryRepositoryPort
-  int upsertAll(Collection<Itinerary> itineraries)   // rows written; cheaper Final Price wins on key conflict
+  int upsertAll(Collection<Itinerary> itineraries)   // rows written; on key conflict the incoming Itinerary wins
   ItineraryPage findBy(SearchCriteria criteria, ItineraryFilter filter,
                        Optional<PageCursor> cursor, int limit)
 
@@ -250,6 +250,10 @@ FreshnessPort
   void markFresh(SearchCriteria criteria, AggregationResult result, Duration ttl)
   Optional<AggregationResult> lastResult(SearchCriteria criteria)
 ```
+
+`upsertAll` stores **what the Providers are offering now**, not the best price ever seen. On an `ItineraryKey` conflict the incoming Itinerary replaces the stored one unconditionally — base price, final price, source and `ingestedAt` — even when the new Final Price is higher. Keeping the cheapest *within* one Aggregation is the DeduplicationPolicy's job (§5), applied by `ItineraryDeduplicator`, and it has already run by the time the repository is called; comparing against the previously stored Itinerary would instead compare against *history*, and a Provider that raised its price could never correct the table. `persisted` therefore counts the Itineraries upserted by this Aggregation, not the ones whose price improved.
+
+A consequence, accepted deliberately: every Aggregation fans out to all three Providers, but if the Provider that won a key last time is unavailable this time, the key is rewritten with the cheapest price among the Providers that *did* answer, which may be higher than what the absent Provider still sells. The next Aggregation in which it answers corrects the row. A key no Provider returns at all keeps its last written price; expiring vanished Itineraries is out of scope (see `SOLUTION.md` §6).
 
 ### Supporting types
 ```

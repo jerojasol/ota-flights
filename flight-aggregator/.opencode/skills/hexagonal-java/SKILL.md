@@ -149,7 +149,8 @@ infrastructure/persistence/
 ```
 
 - `ItineraryJpaEntity` is package-private. It never leaves `persistence`.
-- The adapter implements the domain port and delegates: JPA for keyset reads, `JdbcTemplate.batchUpdate` with `ON CONFLICT (itinerary_key) DO UPDATE ... WHERE excluded.final_price < itineraries.final_price` for writes.
+- The adapter implements the domain port and delegates: JPA for keyset reads, `JdbcTemplate.batchUpdate` with `ON CONFLICT (itinerary_key) DO UPDATE SET base_price, final_price, currency, source, segments, ingested_at = EXCLUDED.*` for writes.
+- **Do not add a `WHERE` to that `DO UPDATE`.** The conflict update is unconditional on purpose: the table holds the price the providers quote now, not the lowest ever seen. `ItineraryDeduplicator` has already picked the cheapest Offer across providers before the repository is called, so a guard such as `WHERE excluded.final_price < itineraries.final_price` could only compare against an earlier aggregation — and would freeze the row at a stale price that no provider honours. A currency guard is equally wrong: `OfferValidator` rejects anything outside the reference currency (O1), so a batch is single-currency, and the guard would strand rows in the old currency after a `REFERENCE_CURRENCY` change. See `domain-model.md` §8.
 - The mapper is a hand-written class; `segments` go to/from JSONB via Jackson *inside the adapter*.
 
 ## 7. Outbound adapter: provider (ACL)

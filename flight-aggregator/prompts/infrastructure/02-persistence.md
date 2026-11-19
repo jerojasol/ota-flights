@@ -64,6 +64,8 @@ WHERE EXCLUDED.final_price < itineraries.final_price
 ```
 Return total affected rows.
 
+> **Superseded by `prompts/fix/compare-fix.md`.** The `WHERE` clause above was the price-increase bug: it kept the lowest price ever seen, so a provider that raised its price could never correct the stored itinerary. The conflict update is now unconditional and also sets `currency`. This block is left as written for the record; see `docs/domain-model.md` §8 for the current contract.
+
 ### 5. `ItineraryPersistenceMapper`
 Entity ↔ `Itinerary` using `Itinerary.rehydrate(...)` and `ItineraryKey.fromStored(...)`. Segments JSON ↔ `List<Segment>` via a Jackson 3 `ObjectMapper`/`JsonMapper` **inside this class**; define a small private `SegmentJson` record for the JSON shape so domain types never get Jackson annotations.
 

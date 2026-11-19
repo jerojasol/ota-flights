@@ -11,7 +11,14 @@ import java.util.Optional;
 
 public interface ItineraryRepositoryPort {
 
-    /** Inserts new keys; on a key conflict the lower Final Price wins. Returns the number of rows written. */
+    /**
+     * Stores what the Providers are offering now. Stores Itineraries whose {@code ItineraryKey} is not known yet; for
+     * a key that is already stored the incoming Itinerary replaces it unconditionally, even when its Final Price is
+     * higher, so a Provider that raised its price corrects what is stored. Keeping the cheapest Offer within one
+     * Aggregation is the DeduplicationPolicy's job and has already happened when this is called.
+     *
+     * @return the number of Itineraries stored by this call
+     */
     int upsertAll(Collection<Itinerary> itineraries);
 
     ItineraryPage findBy(SearchCriteria criteria, ItineraryFilter filter, Optional<PageCursor> cursor, int limit);

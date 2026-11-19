@@ -62,6 +62,7 @@ class ItineraryRepositoryAdapterIT {
     private static final LocalDate DATE = LocalDate.parse("2026-11-20");
     private static final Instant MORNING = Instant.parse("2026-11-20T07:35:00Z");
     private static final Instant NOW = Instant.parse("2026-11-14T10:00:00Z");
+    private static final Instant LATER = Instant.parse("2026-11-14T10:30:00Z");
     private static final SearchCriteria MAD_JFK = new SearchCriteria(MAD, JFK, DATE);
     private static final MarkupPolicy FIVE_PERCENT = new PercentageMarkupPolicy(new BigDecimal("5"));
     private static final Comparator<Itinerary> PAGE_ORDER = Comparator
@@ -105,23 +106,44 @@ class ItineraryRepositoryAdapterIT {
         assertThat(stored.source()).isEqualTo(Provider.GAMMA);
     }
 
+    // The stored row holds what the providers quote now, not the lowest price ever seen: a key that comes back
+    // dearer overwrites the cheaper row it replaces (domain-model.md §8, ItineraryRepositoryPort.upsertAll).
     @Test
-    void should_leave_row_untouched_when_same_key_arrives_more_expensive() {
-        Itinerary original = direct(Provider.ALPHA, "IB6251", MORNING, "300.00");
-        repository.upsertAll(List.of(original));
+    void should_update_row_when_same_key_arrives_more_expensive() {
+        repository.upsertAll(List.of(direct(Provider.ALPHA, "IB6251", MORNING, "300.00")));
+        Itinerary dearer = direct(Provider.BETA, "IB6251", MORNING, "350.00");
 
-        int written = repository.upsertAll(List.of(direct(Provider.BETA, "IB6251", MORNING, "350.00")));
+        int written = repository.upsertAll(List.of(dearer));
 
-        assertThat(written).isZero();
+        assertThat(written).isEqualTo(1);
         Itinerary stored = single();
-        assertThat(stored.finalPrice()).isEqualTo(original.finalPrice());
-        assertThat(stored.source()).isEqualTo(Provider.ALPHA);
+        assertThat(stored.finalPrice()).isEqualTo(dearer.finalPrice());
+        assertThat(stored.basePrice()).isEqualTo(Price.of("350.00", "EUR"));
+        assertThat(stored.source()).isEqualTo(Provider.BETA);
     }
 
+    // The acceptance criterion of the price-increase fix: the provider that won the key last time raises its own
+    // price, and no other provider offers it. The row must follow the increase instead of keeping a price nobody sells.
     @Test
-    void should_leave_row_untouched_when_same_key_arrives_cheaper_in_another_currency() {
-        Itinerary euros = direct(Provider.ALPHA, "IB6251", MORNING, "100.00");
-        repository.upsertAll(List.of(euros));
+    void should_update_row_when_the_provider_that_won_the_key_raises_its_own_price() {
+        repository.upsertAll(List.of(direct(Provider.GAMMA, "IB6251", MORNING, "240.00")));
+        Itinerary raised = direct(Provider.GAMMA, "IB6251", MORNING, "265.00", LATER);
+
+        int written = repository.upsertAll(List.of(raised));
+
+        assertThat(written).isEqualTo(1);
+        Itinerary stored = single();
+        assertThat(stored.basePrice()).isEqualTo(Price.of("265.00", "EUR"));
+        assertThat(stored.finalPrice()).isEqualTo(raised.finalPrice());
+        assertThat(stored.source()).isEqualTo(Provider.GAMMA);
+        assertThat(stored.ingestedAt()).isEqualTo(LATER);
+    }
+
+    // OfferValidator keeps a batch single-currency, so a conflict across currencies only happens when
+    // REFERENCE_CURRENCY changed between aggregations. The amount and the currency column must move together.
+    @Test
+    void should_replace_amount_and_currency_when_same_key_arrives_in_another_currency() {
+        repository.upsertAll(List.of(direct(Provider.ALPHA, "IB6251", MORNING, "100.00")));
         Itinerary dollars = Itinerary.from(new Offer(Provider.BETA,
                         List.of(segment("IB6251", MAD, MORNING, JFK, MORNING.plus(Duration.ofHours(8)))),
                         Price.of("50.00", "USD")),
@@ -129,11 +151,11 @@ class ItineraryRepositoryAdapterIT {
 
         int written = repository.upsertAll(List.of(dollars));
 
-        assertThat(written).isZero();
+        assertThat(written).isEqualTo(1);
         Itinerary stored = single();
-        assertThat(stored.basePrice()).isEqualTo(Price.of("100.00", "EUR"));
-        assertThat(stored.finalPrice()).isEqualTo(euros.finalPrice());
-        assertThat(stored.source()).isEqualTo(Provider.ALPHA);
+        assertThat(stored.basePrice()).isEqualTo(Price.of("50.00", "USD"));
+        assertThat(stored.finalPrice()).isEqualTo(dollars.finalPrice());
+        assertThat(stored.source()).isEqualTo(Provider.BETA);
     }
 
     @Test
@@ -283,10 +305,15 @@ class ItineraryRepositoryAdapterIT {
     }
 
     private static Itinerary direct(Provider provider, String flight, Instant departure, String amount) {
+        return direct(provider, flight, departure, amount, NOW);
+    }
+
+    private static Itinerary direct(Provider provider, String flight, Instant departure, String amount,
+                                    Instant ingestedAt) {
         return Itinerary.from(new Offer(provider,
                         List.of(segment(flight, MAD, departure, JFK, departure.plus(Duration.ofHours(8)))),
                         Price.of(amount, "EUR")),
-                FIVE_PERCENT, NOW);
+                FIVE_PERCENT, ingestedAt);
     }
 
     private static Itinerary connecting(Provider provider, String first, String second, String amount) {
